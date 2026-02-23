@@ -1,8 +1,8 @@
 import { Regex, type SomeCompanionConfigField } from '@companion-module/base'
 
-export interface ModuleConfig {
+export type ModuleConfig = {
 	host: string
-	port: number
+	password: string
 }
 
 export function GetConfigFields(): SomeCompanionConfigField[] {
@@ -10,18 +10,15 @@ export function GetConfigFields(): SomeCompanionConfigField[] {
 		{
 			type: 'textinput',
 			id: 'host',
-			label: 'Target IP',
-			width: 8,
+			label: 'Arcadia IP',
+			width: 4,
 			regex: Regex.IP,
 		},
 		{
-			type: 'number',
-			id: 'port',
-			label: 'Target Port',
-			width: 4,
-			min: 1,
-			max: 65535,
-			default: 8000,
+			type: 'textinput',
+			id: 'password',
+			label: 'Admin Password',
+			width: 8,
 		},
 	]
 }

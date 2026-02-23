@@ -1,22 +1,28 @@
-import type { ModuleInstance } from './main.js'
+import { CompanionActionDefinitions, CompanionActionEvent } from '@companion-module/base'
+import ModuleInstance from './main.js'
+import * as arcadia from './arcadia.js'
 
-export function UpdateActions(self: ModuleInstance): void {
-	self.setActionDefinitions({
-		sample_action: {
-			name: 'My First Action',
+export function UpdateActions(instance: ModuleInstance): void {
+	const actions: CompanionActionDefinitions = {
+		remote_mic_kill: {
+			name: 'Remote Mic Kill (RMK)',
 			options: [
 				{
-					id: 'num',
 					type: 'number',
-					label: 'Test',
-					default: 5,
-					min: 0,
-					max: 100,
+					label: 'Device ID',
+					id: 'deviceId',
+					default: 1,
+					min: 1,
+					max: 999,
+					tooltip: 'The device ID to send RMK command to',
 				},
 			],
-			callback: async (event) => {
-				console.log('Hello world!', event.options.num)
+			callback: async (action: CompanionActionEvent) => {
+				const deviceId = action.options.deviceId as number
+				await arcadia.remoteMicKill(instance, deviceId)
 			},
 		},
-	})
+	}
+
+	instance.setActionDefinitions(actions)
 }
