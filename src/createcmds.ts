@@ -1,11 +1,10 @@
 import ModuleInstance from './main.js'
 import { getRequest } from './rest.js'
 import { OpenAPIV3 } from 'openapi-types'
-import fetch from 'node-fetch'
 import { promises as fs } from 'fs'
 import path from 'path'
 
-export interface LoadedSchemas {
+export type LoadedSchemas = {
 	mainSchema: OpenAPIV3.Document
 	refSchemas: Record<string, OpenAPIV3.SchemaObject>
 }
@@ -32,7 +31,7 @@ export async function loadSchemasAndRefs(self: ModuleInstance, deviceHost: strin
 
 	// Try to download live schema
 	try {
-		const res = await getRequest(apiUrl, self.bearerToken)
+		const res = await getRequest(apiUrl, self)
 		if (res) {
 			const liveSchema = res as OpenAPIV3.Document
 
@@ -77,6 +76,7 @@ export async function loadSchemasAndRefs(self: ModuleInstance, deviceHost: strin
 	findRefs(mainSchema)
 
 	for (const ref of refs) {
+		if (ref.startsWith('#')) continue // internal OpenAPI ref, not a file
 		console.log('found ref: ', ref)
 		const filePath = path.join(SCHEMA_CACHE_DIR, ref)
 		let shouldDownload = false
@@ -94,9 +94,11 @@ export async function loadSchemasAndRefs(self: ModuleInstance, deviceHost: strin
 			const refUrl = `${deviceHost}/api/1/schemas/${ref}`
 			try {
 				console.log('fetching: ', refUrl)
-				const res = await fetch(refUrl)
+				const res = await fetch(refUrl, {
+					headers: { Authorization: `Bearer ${self.bearerToken}` },
+				})
 				if (!res.ok) {
-					self.log('error', `Failed to fetch $ref ${ref}: ${res.status}`)
+					self.log('warn', `Skipping $ref ${ref}: ${res.status}`)
 					continue
 				}
 				const body = await res.text()

@@ -1,4 +1,4 @@
-# companion-module-[replace with module name]
+# companion-module-clearcom-rest
 
 See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
