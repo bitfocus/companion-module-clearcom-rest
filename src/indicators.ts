@@ -30,7 +30,7 @@ const MARGIN = 4
 const ARC_START = 120
 const ARC_SWEEP = 300
 
-const TRACK: [number, number, number, number] = [0, 0, 0, 0]
+const BORDER: [number, number, number, number] = [0x80, 0x80, 0x80, 0x80]
 const GREEN: [number, number, number, number] = [0x00, 0xcc, 0x00, 0xff]
 const YELLOW: [number, number, number, number] = [0xff, 0xcc, 0x00, 0xff]
 const RED: [number, number, number, number] = [0xff, 0x22, 0x00, 0xff]
@@ -57,12 +57,12 @@ function trackColor(
 ): [number, number, number, number] | null {
 	if (yellowStart > redStart) {
 		// Reversed mode: transparent unfilled, single color based on current value
-		if (posRatio > filledRatio) return TRACK
+		if (posRatio > filledRatio) return null
 		if (value > yellowStart) return GREEN
 		if (value > redStart) return YELLOW
 		return RED
 	}
-	if (posRatio > filledRatio) return TRACK
+	if (posRatio > filledRatio) return null
 	const posValue = min + posRatio * (max - min)
 	if (posValue < yellowStart) return GREEN
 	if (posValue < redStart) return YELLOW
@@ -83,8 +83,10 @@ function drawBar(buf: Buffer, vertical: boolean, opts: MeterOptions, filledRatio
 		for (let x = MARGIN; x < w - MARGIN; x++) {
 			const posRatio = (x - MARGIN) / (trackLen - 1)
 			const c = trackColor(posRatio, filledRatio, opts.min, opts.yellowStart, opts.redStart, opts.max, opts.value)
-			if (!c) continue
-			for (let y = y0; y <= y1; y++) setPixel(buf, x, y, c, w, h)
+			for (let y = y0; y <= y1; y++) {
+				const isBorder = y === y0 || y === y1 || x === MARGIN || x === w - MARGIN - 1
+				setPixel(buf, x, y, c ?? (isBorder ? BORDER : [0, 0, 0, 0]), w, h)
+			}
 		}
 	} else {
 		// Bottom → top
@@ -95,8 +97,10 @@ function drawBar(buf: Buffer, vertical: boolean, opts: MeterOptions, filledRatio
 		for (let y = MARGIN; y < h - MARGIN; y++) {
 			const posRatio = (h - MARGIN - 1 - y) / (trackLen - 1)
 			const c = trackColor(posRatio, filledRatio, opts.min, opts.yellowStart, opts.redStart, opts.max, opts.value)
-			if (!c) continue
-			for (let x = x0; x <= x1; x++) setPixel(buf, x, y, c, w, h)
+			for (let x = x0; x <= x1; x++) {
+				const isBorder = x === x0 || x === x1 || y === MARGIN || y === h - MARGIN - 1
+				setPixel(buf, x, y, c ?? (isBorder ? BORDER : [0, 0, 0, 0]), w, h)
+			}
 		}
 	}
 }
@@ -109,12 +113,13 @@ function drawArc(buf: Buffer, opts: MeterOptions, filledRatio: number, w: number
 	const outerR = cx - MARGIN
 	const innerR = Math.max(1, outerR - opts.thickness)
 
+	// Expand scan region by 1px for AA fringe
 	for (let y = 0; y < h; y++) {
 		for (let x = 0; x < w; x++) {
 			const dx = x - cx
 			const dy = y - cy
 			const dist = Math.sqrt(dx * dx + dy * dy)
-			if (dist < innerR || dist > outerR) continue
+			if (dist < innerR - 1 || dist > outerR + 1) continue
 
 			// atan2 in screen coords: 0°=right, clockwise positive
 			let angle = Math.atan2(dy, dx) * (180 / Math.PI)
@@ -124,10 +129,29 @@ function drawArc(buf: Buffer, opts: MeterOptions, filledRatio: number, w: number
 			const norm = (angle - ARC_START + 360) % 360
 			if (norm > ARC_SWEEP) continue
 
+			// Anti-alias: compute coverage based on distance from ideal edges
+			const outerAlpha = Math.max(0, Math.min(1, outerR + 0.5 - dist))
+			const innerAlpha = Math.max(0, Math.min(1, dist - innerR + 0.5))
+			const alpha = Math.min(outerAlpha, innerAlpha)
+			if (alpha <= 0) continue
+
 			const posRatio = norm / ARC_SWEEP
 			const c = trackColor(posRatio, filledRatio, opts.min, opts.yellowStart, opts.redStart, opts.max, opts.value)
-			if (!c) continue
-			setPixel(buf, x, y, c, w, h)
+			const isBorder = dist <= innerR + 1 || dist >= outerR - 1
+			const base = c ?? (isBorder ? BORDER : ([0, 0, 0, 0] as [number, number, number, number]))
+			setPixel(buf, x, y, [base[0], base[1], base[2], Math.round(base[3] * alpha)], w, h)
+		}
+	}
+
+	// Draw end caps explicitly: line from innerR to outerR at start and end angles
+	for (const angleDeg of [ARC_START, (ARC_START + ARC_SWEEP) % 360]) {
+		const rad = angleDeg * (Math.PI / 180)
+		const cos = Math.cos(rad)
+		const sin = Math.sin(rad)
+		for (let r = innerR; r <= outerR; r++) {
+			const px = Math.round(cx + r * cos)
+			const py = Math.round(cy + r * sin)
+			setPixel(buf, px, py, BORDER, w, h)
 		}
 	}
 }
