@@ -3,7 +3,7 @@
 	"id": "companion-module-clearcom-rest",
 	"name": "companion-module-clearcom-rest",
 	"shortname": "CC Rest",
-	"description": "A Module to control Clear-Com equipment using a REST API",
+	"description": "A Module to control Clear-Com equipment that use a REST API",
 	"version": "0.1.0",
 	"type": "connection",
 	"license": "MIT",
@@ -26,6 +26,6 @@
 	},
 	"legacyIds": [],
 	"manufacturer": "Clear-Com",
-	"products": ["Arcadia, LQ"],
-	"keywords": []
+	"products": ["Arcadia"],
+	"keywords": ["Arcadia", "Freespeak", "Edge", "Icon"]
 }

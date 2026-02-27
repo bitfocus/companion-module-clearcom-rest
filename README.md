@@ -4,8 +4,6 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 ## Getting started
 
-Executing a `yarn` command should perform all necessary steps to develop the module, if it does not then follow the steps below.
-
-The module can be built once with `yarn build`. This should be enough to get the module to be loadable by companion.
-
-While developing the module, by using `yarn dev` the compiler will be run in watch mode to recompile the files on change.
+Connect your Clear-Com Master Station to the network, and make a note of it's IP and Admin password.
+Enter the IP and Password in the config.
+You can also choose what kind of Endpoints you want to control - this makes the action/feedback list shorter!

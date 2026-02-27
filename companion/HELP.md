@@ -1,3 +1,3 @@
 ## Clear-Com Rest Module
 
-Write some help for your users here!
+This Module is for use with REST-based master stations like the Arcadia.
