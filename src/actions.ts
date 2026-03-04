@@ -71,13 +71,19 @@ function formatEnumLabel(value: string): string {
 	while (remaining.length > 0) {
 		const match = tokens.find((t) => remaining.startsWith(t))
 		if (match) {
-			parts.push(match.charAt(0).toUpperCase() + match.slice(1))
+			if (match == 'forcetalk') {
+				parts.push('Force', 'Talk')
+			} else {
+				parts.push(match.charAt(0).toUpperCase() + match.slice(1))
+			}
+			if (parts[parts.length - 1] == 'Talk') parts.push('&')
 			remaining = remaining.slice(match.length)
 		} else {
 			parts.push(remaining.charAt(0).toUpperCase() + remaining.slice(1))
 			break
 		}
 	}
+	if (parts.length < 3 && ['Talk', 'Listen'].includes(parts[0])) parts[1] = 'Only'
 	return parts.join(' ')
 }
 
@@ -118,6 +124,7 @@ function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions 
 
 		actions[def.id.replace(/\./g, '_')] = {
 			name: `${typePrefix}${scopePrefix}${def.label}`,
+			description: def.description,
 			options: [subjectOption, ...modeOptions(def), valueOption(def, choices)],
 			callback: async (action: CompanionActionEvent) => {
 				const ids = (action.options['ids'] as string[]).map(Number)
@@ -166,6 +173,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 	const actions: CompanionActionDefinitions = {
 		call: {
 			name: 'Call Beltpack',
+			description: 'Send a call notification to a beltpack role.',
 			options: [
 				{
 					type: 'multidropdown',
@@ -193,8 +201,41 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 				for (const roleId of roleIds) await arcadia.sendCall(instance, roleId, active, text)
 			},
 		},
+		assign_role: {
+			name: 'Assign Role to Endpoint',
+			description: 'Change association for the endpoint attached to the device.',
+			options: [
+				{
+					type: 'dropdown',
+					id: 'endpointId',
+					label: 'Endpoint',
+					default: arcadia.endpointChoices(instance)[0]?.id ?? '',
+					choices: arcadia.endpointChoices(instance),
+				},
+				{
+					type: 'dropdown',
+					id: 'rolesetGid',
+					label: 'Role',
+					default: '',
+					choices: [
+						{ id: '', label: '(remove)' },
+						...[...instance.rolesets.values()].map((r) => ({
+							id: r['gid'] as string,
+							label: (r['label'] ?? r['name']) as string,
+						})),
+					],
+				},
+			],
+			callback: async (action: CompanionActionEvent) => {
+				const endpointId = Number(action.options['endpointId'])
+				const gid = action.options['rolesetGid'] as string
+				await arcadia.changeEndpointAssociation(instance, endpointId, gid || null)
+			},
+		},
+
 		remote_mic_kill: {
 			name: 'Remote Mic Kill (RMK)',
+			description: 'Remotely mute the microphone on a beltpack.',
 			options: [
 				{
 					type: 'multidropdown',
@@ -220,6 +261,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		}))
 		actions['port_2w_start_nulling'] = {
 			name: '[2W] Start Nulling',
+			description: 'Start the nulling process on a port. Only available on 2W ports.',
 			options: [{ type: 'multidropdown', id: 'portIds', label: 'Port', default: [], choices: twoPChoices }],
 			callback: async (action: CompanionActionEvent) => {
 				const portIds = (action.options['portIds'] as string[]).map(Number)
@@ -265,6 +307,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		const dtKey = deviceType.replace(/[^a-z0-9]/gi, '_').toLowerCase()
 		actions[`assign_key_${dtKey}`] = {
 			name: `[${deviceType}] Assign Key`,
+			description: 'Assign a channel, connection, or role to a key slot on a beltpack.',
 			options: opts,
 			learn: (action) => {
 				const roleId = (action.options['roleIds'] as string[])[0]

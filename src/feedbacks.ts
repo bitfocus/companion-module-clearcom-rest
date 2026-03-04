@@ -97,6 +97,7 @@ function buildDefsFor(
 		return {
 			type: 'boolean',
 			name,
+			description: def.description,
 			defaultStyle: { bgcolor: 0x00ff00, color: 0x000000 } satisfies Partial<CompanionFeedbackButtonStyleResult>,
 			options: [subjectOption],
 			unsubscribe: unsubscribeFn(instance),
@@ -112,6 +113,7 @@ function buildDefsFor(
 	return {
 		type: 'value',
 		name,
+		description: def.description,
 		options: [subjectOption],
 		unsubscribe: unsubscribeFn(instance),
 		callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
@@ -242,7 +244,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 				subscribe(instance, feedback.feedbackId, 'endpointStatus')
 				const status = instance.endpointStatus.get(Number(feedback.options['endpointId']))
 				const dpId = (status?.['association'] as DeviceRecord | undefined)?.['dpId'] as number | undefined
-				return dpId !== undefined ? ((instance.rolesets.get(dpId)?.['name'] ?? null) as JsonValue) : null
+				return dpId !== undefined ? (dpId as JsonValue) : null
 			},
 		},
 
@@ -262,8 +264,10 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			],
 			unsubscribe: unsubscribeFn(instance),
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
-				subscribe(instance, feedback.feedbackId, 'endpointStatus')
-				return instance.endpointStatus.get(Number(feedback.options['endpointId']))?.['status'] === 'online'
+				subscribe(instance, feedback.feedbackId, 'endpoints')
+				const gw = instance.gateways.get(Number(feedback.options['endpointId']))
+				const status = (gw?.['liveStatus'] as DeviceRecord | undefined)?.['status'] ?? gw?.['status']
+				return status === 'online'
 			},
 		},
 
@@ -281,8 +285,9 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			],
 			unsubscribe: unsubscribeFn(instance),
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
-				subscribe(instance, feedback.feedbackId, 'endpointStatus')
-				return (instance.endpointStatus.get(Number(feedback.options['endpointId']))?.['status'] ?? null) as JsonValue
+				subscribe(instance, feedback.feedbackId, 'endpoints')
+				const gw = instance.gateways.get(Number(feedback.options['endpointId']))
+				return ((gw?.['liveStatus'] as DeviceRecord | undefined)?.['status'] ?? gw?.['status'] ?? null) as JsonValue
 			},
 		},
 

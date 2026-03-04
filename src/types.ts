@@ -45,6 +45,7 @@ export type WriteDef = {
 export type ControlDef = {
 	id: string // e.g. 'port.inputGain', 'role.name'
 	label: string // shown in Companion UI
+	description?: string // from schema description field
 	scope: ControlScope
 	deviceTypes: string[] // empty = all types within scope
 	read: ReadDef | null // null = write-only

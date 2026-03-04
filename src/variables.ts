@@ -11,17 +11,16 @@ export function UpdateVariableDefinitions(instance: ModuleInstance): void {
 	const fans = instance.deviceInfo?.device_liveStatus?.fanStatus ?? []
 	const temps = instance.deviceInfo?.device_liveStatus?.temperatureSensors ?? []
 
-	instance.setVariableDefinitions([
-		{ variableId: 'device_label', name: 'Device Label' },
-		{ variableId: 'device_type', name: 'Device Type' },
-		{ variableId: 'firmware_version', name: 'Firmware Version' },
-		{ variableId: 'uptime', name: 'Uptime (hh:mm:ss)' },
-		...fans.map((f) => ({ variableId: `fan_speed_${f.Name}`, name: `Fan ${f.Name} Speed (%)` })),
-		...temps.map((t) => ({
-			variableId: `temp_${t.sensorName.replace(/\s+/g, '_')}`,
-			name: `Temp ${t.sensorName} (°C)`,
-		})),
-	])
+	const defs: Record<string, { name: string }> = {
+		device_label: { name: 'Device Label' },
+		device_type: { name: 'Device Type' },
+		firmware_version: { name: 'Firmware Version' },
+		uptime: { name: 'Uptime (hh:mm:ss)' },
+	}
+	for (const f of fans) defs[`fan_speed_${f.Name}`] = { name: `Fan ${f.Name} Speed (%)` }
+	for (const t of temps) defs[`temp_${t.sensorName.replace(/\s+/g, '_')}`] = { name: `Temp ${t.sensorName} (°C)` }
+
+	instance.setVariableDefinitions(defs)
 }
 
 export function UpdateVariableValues(instance: ModuleInstance): void {

@@ -398,6 +398,22 @@ function handleEndpointUpdated(instance: ModuleInstance, event: EndpointUpdatedE
 
 // ─── Initial fetch ────────────────────────────────────────────────────────────
 
+async function fetchNullingStatus(instance: ModuleInstance): Promise<void> {
+	const twoPorts = [...instance.ports.values()].filter((p) => p['port_config_type'] === '2W')
+	for (const port of twoPorts) {
+		try {
+			const result = await getRequest<{ nulling: string }>(
+				`http://${instance.config.host}${port['res'] as string}/nulling`,
+				instance,
+			)
+			instance.nullingStatus.set(port['port_id'] as number, result.nulling)
+		} catch {
+			// port may not support nulling — skip silently
+		}
+	}
+	instance.triggerFeedbacksForStore('nulling')
+}
+
 async function initialFetch(instance: ModuleInstance): Promise<void> {
 	try {
 		await fetchDevice(instance)
@@ -406,6 +422,7 @@ async function initialFetch(instance: ModuleInstance): Promise<void> {
 		await fetchPorts(instance)
 		await fetchKeysets(instance)
 		await fetchEndpoints(instance)
+		await fetchNullingStatus(instance)
 		instance.rebuildIfChanged()
 		rlog(instance, 'info', 'Initial fetch complete')
 	} catch (error) {

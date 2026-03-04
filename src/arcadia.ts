@@ -387,3 +387,23 @@ async function pollNulling(instance: ModuleInstance, portId: number, url: string
 		}
 	}
 }
+
+// ─── Endpoint role / association ──────────────────────────────────────────────
+
+export async function changeEndpointRole(instance: ModuleInstance, endpointId: number, roleId: number): Promise<void> {
+	const ep = instance.endpoints.get(endpointId)
+	if (!ep) return
+	const url = `http://${instance.config.host}${ep['res'] as string}/changerole`
+	await postRequest(url, instance, { roleId })
+}
+
+export async function changeEndpointAssociation(
+	instance: ModuleInstance,
+	endpointId: number,
+	rolesetGid: string | null,
+): Promise<void> {
+	const ep = instance.endpoints.get(endpointId)
+	if (!ep) return
+	const url = `http://${instance.config.host}${ep['res'] as string}/changeassociation`
+	await postRequest(url, instance, { gid: ep['gid'], association: { gid: rolesetGid } })
+}
