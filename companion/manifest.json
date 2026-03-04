@@ -4,7 +4,7 @@
 	"name": "companion-module-clearcom-rest",
 	"shortname": "CC Rest",
 	"description": "A Module to control Clear-Com equipment that use a REST API",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"type": "connection",
 	"license": "MIT",
 	"repository": "git+https://github.com/MeestorX/companion-module-clearcom-rest.git",

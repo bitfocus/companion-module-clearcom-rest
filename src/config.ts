@@ -17,6 +17,7 @@ export type ModuleConfig = {
 	host: string
 	password: string
 	endpointTypes: string[]
+	logLevel?: 'debug' | 'info' | 'none'
 }
 
 export function GetConfigFields(): SomeCompanionConfigField[] {
@@ -41,6 +42,18 @@ export function GetConfigFields(): SomeCompanionConfigField[] {
 			width: 12,
 			default: [],
 			choices: ENDPOINT_TYPES.map((t) => ({ id: t, label: t })),
+		},
+		{
+			type: 'dropdown',
+			id: 'logLevel',
+			label: 'Log Level',
+			width: 12,
+			default: 'info',
+			choices: [
+				{ id: 'debug', label: 'Debug' },
+				{ id: 'info', label: 'Info' },
+				{ id: 'none', label: 'None' },
+			],
 		},
 	]
 }
