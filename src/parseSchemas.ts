@@ -15,10 +15,35 @@ const DEFINITION_TO_DEVICE: Record<string, string> = {
 	FSIIBPSettings: 'FSII-BP',
 	EDGEBPSettings: 'E-BP',
 	NEPSettings: 'NEP',
-	VSeriesPanelSettingsBase: 'V-Series',
 	VSeriesPanel12KeySettings: 'V-Series-12',
 	VSeriesPanel24KeySettings: 'V-Series-24',
 	VSeriesPanel32KeySettings: 'V-Series-32',
+	VSeriesPanel12DKeySettings: 'V-Series-12D',
+}
+
+// Maps deviceType → the 'type' string used in /api/2/keysets responses.
+// Derived from observed device data — the schema does not expose these strings.
+export const DEVICE_TYPE_TO_KEYSET_TYPE: Record<string, string[]> = {
+	'HMS-4X': ['HMS-4X'],
+	'HRM-4X': ['HRM-4X'],
+	'HKB-2X': ['HKB-2X'],
+	'HBP-2X': ['HBP-2X'],
+	'FSII-BP': ['FSII-BP'],
+	'E-BP': ['E-BP'],
+	NEP: ['NEP'],
+	'V-Series-12': ['V12'],
+	'V-Series-12D': ['V12D'],
+	'V-Series-24': ['V24', 'V24D'],
+	'V-Series-32': ['V32', 'V32D'],
+}
+
+// Key counts per V-Series variant — the schema base definition reports maxItems=32
+// for all variants, so we override per variant based on hardware key counts.
+const V_SERIES_KEY_COUNT: Record<string, number> = {
+	'V-Series-12': 12,
+	'V-Series-12D': 12,
+	'V-Series-24': 24,
+	'V-Series-32': 32,
 }
 
 // V-Series variants inherit capabilities from the base definition
@@ -26,6 +51,7 @@ const V_SERIES_VARIANTS = new Set([
 	'VSeriesPanel12KeySettings',
 	'VSeriesPanel24KeySettings',
 	'VSeriesPanel32KeySettings',
+	'VSeriesPanel12DKeySettings',
 ])
 const V_SERIES_BASE = 'VSeriesPanelSettingsBase'
 
@@ -64,18 +90,30 @@ function parseProperty(prop: Record<string, unknown>): SettingValueType | null {
 	if (type === 'integer' || type === 'number') {
 		if (enumVals) {
 			const nums = (enumVals as (number | null)[]).filter((v): v is number => v !== null).sort((a, b) => a - b)
-			return { kind: 'number-enum', values: nums }
+			const enumNames = (prop['x-enumNames'] as string[] | undefined) ?? (prop['enumNames'] as string[] | undefined)
+			// Align labels to the filtered+sorted nums if present
+			let labels: string[] | undefined
+			if (enumNames) {
+				const paired = (enumVals as (number | null)[])
+					.map((v, i) => ({ v, label: enumNames[i] }))
+					.filter((x): x is { v: number; label: string } => x.v !== null)
+					.sort((a, b) => a.v - b.v)
+				labels = paired.map((x) => x.label)
+			}
+			return { kind: 'number-enum', values: nums, labels }
 		}
 		if ('minimum' in prop && 'maximum' in prop) {
+			// JSON Schema integers without multipleOf have an implicit step of 1
+			const step = (prop.multipleOf as number | undefined) ?? 1
 			return {
 				kind: 'integer',
 				min: prop.minimum as number,
 				max: prop.maximum as number,
-				step: (prop.multipleOf as number) ?? 1,
+				step,
 			}
 		}
-		// No constraints — treat as unconstrained integer (read-only feedback use)
-		return { kind: 'integer', min: -Infinity, max: Infinity, step: 1 }
+		// No constraints — not representable as a control, skip
+		return null
 	}
 
 	return null
@@ -328,16 +366,19 @@ function buildKeysetControlDefs(refSchemas: Record<string, Record<string, unknow
 		// V-Series variants inherit settings from base
 		const sourceDefName = V_SERIES_VARIANTS.has(defName) ? V_SERIES_BASE : defName
 
-		const getDef = getDefs[sourceDefName]
+		// PUT schema is authoritative for value types — it defines accepted values.
+		// GET schema is only consulted to confirm a field is readable.
 		const putDef = putDefs[sourceDefName] ?? putDefs[defName]
-		if (!getDef || !putDef) continue
+		const getDef = getDefs[sourceDefName] ?? putDef
+		if (!putDef) continue
 
 		const getProps = (getDef.properties as Record<string, Record<string, unknown>>) ?? {}
 		const putProps = (putDef.properties as Record<string, Record<string, unknown>>) ?? {}
 
-		for (const [key, prop] of Object.entries(getProps)) {
+		for (const [key, prop] of Object.entries(putProps)) {
 			if (SKIP_KEYSET_SETTINGS.has(key)) continue
-			if (!(key in putProps)) continue
+			// Must also be readable (present in GET schema)
+			if (!(key in getProps)) continue
 
 			const valueType = parseProperty(prop)
 			if (!valueType) continue
@@ -411,10 +452,16 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 		const def = definitions[defName]
 		if (!def) continue
 
-		const keysets = (def['properties'] as Record<string, Record<string, unknown>> | undefined)?.['keysets']
-		const keyCount = keysets?.['maxItems'] as number | undefined
-		if (keyCount === undefined) continue
-
+		// V-Series variants inherit keyCount from the base definition, but the base
+		// reports maxItems=32 for all variants. Use the per-variant override if available.
+		const keysetsDef = V_SERIES_VARIANTS.has(defName) ? definitions[V_SERIES_BASE] : def
+		const keysets = (keysetsDef?.['properties'] as Record<string, Record<string, unknown>> | undefined)?.['keysets']
+		const schemaKeyCount = keysets?.['maxItems'] as number | undefined
+		const keyCount = V_SERIES_KEY_COUNT[deviceType] ?? schemaKeyCount
+		if (keyCount === undefined) {
+			console.warn(`parseKeyAssignCapabilities: no keyCount for ${deviceType} — skipping`)
+			continue
+		}
 		const itemProps = getKeysetsItemProps(defName)
 		const activationStates =
 			((itemProps['activationState'] as Record<string, unknown> | undefined)?.['enum'] as string[] | null) ?? null

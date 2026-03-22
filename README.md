@@ -1,11 +1,13 @@
 # companion-module-clearcom-rest
 
-version 0.2.2
-
 See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
-## Getting started
+Changelog:
 
-Connect your Clear-Com Master Station to the network, and make a note of it's IP and Admin password.
-Enter the IP and Password in the config.
-You can also choose what kind of Endpoints you want to control - this makes the action/feedback list shorter!
+### 0.3.0
+
+- V-Panel Actions & Feedbacks
+- Mic Type/Gain fixups for Helixnet packs
+- Live Update of Endpoint/RoleNames in Actions
+- Better messaging in Logs for Errors
+- Less Errors

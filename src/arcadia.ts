@@ -1,8 +1,8 @@
 import ModuleInstance from './main.js'
 import { makeLogger } from './logger.js'
 
-let _instance: ModuleInstance | null = null
 const log = makeLogger('arcadia', () => _instance?.config)
+let _instance: ModuleInstance | null = null
 import {
 	getRequest,
 	postRequest,
@@ -17,6 +17,7 @@ import {
 	fetchKeysetsGids,
 } from './network.js'
 import { ControlDef, DeviceRecord } from './types.js'
+import { DEVICE_TYPE_TO_KEYSET_TYPE } from './parseSchemas.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,28 @@ export function getField(record: DeviceRecord, field: string): unknown {
 	return current
 }
 
+// Walk a roleset's sessions to find the keyset ID matching the given device type.
+// Returns undefined if no matching keyset is found.
+export function findKeysetIdForRole(instance: ModuleInstance, roleId: number, deviceType: string): number | undefined {
+	const keysetTypes = DEVICE_TYPE_TO_KEYSET_TYPE[deviceType]
+	if (!keysetTypes) {
+		log.warn(`findKeysetIdForRole: no keyset types mapped for deviceType=${deviceType}`)
+		return undefined
+	}
+	const roleset = instance.rolesets.get(roleId)
+	if (!roleset) return undefined
+	const sessions = roleset['sessions'] as DeviceRecord | undefined
+	for (const session of Object.values(sessions ?? {}) as DeviceRecord[]) {
+		const candidateId = ((session['data'] as DeviceRecord | undefined)?.['settings'] as DeviceRecord | undefined)?.[
+			'defaultRole'
+		] as number | undefined
+		if (candidateId === undefined) continue
+		const ksType = instance.keysets.get(candidateId)?.['type'] as string | undefined
+		if (ksType && keysetTypes.includes(ksType)) return candidateId
+	}
+	return undefined
+}
+
 // Get the roleset currently assigned to an endpoint (via liveStatus.association.dpId)
 export function getRoleFromEndpoint(instance: ModuleInstance, endpointId: number): DeviceRecord | null {
 	_instance = instance
@@ -42,33 +65,17 @@ export function getRoleFromEndpoint(instance: ModuleInstance, endpointId: number
 	return instance.rolesets.get(dpId) ?? null
 }
 
-// Get all endpoints currently assigned to a roleset
-export function getEndpointsFromRole(instance: ModuleInstance, roleId: number): DeviceRecord[] {
-	_instance = instance
-	return [...instance.endpointStatus.entries()]
-		.filter(([_, status]) => {
-			const association = status['association'] as DeviceRecord | undefined
-			return (association?.['dpId'] as number | undefined) === roleId
-		})
-		.map(([id]) => instance.endpoints.get(id) ?? instance.gateways.get(id))
-		.filter((ep): ep is DeviceRecord => ep !== undefined)
-}
-
 // Build a choice label for an endpoint: "Label (ID)" or "Label (ID) - RoleName"
 export function endpointChoiceLabel(instance: ModuleInstance, ep: DeviceRecord): string {
-	_instance = instance
 	const id = ep['id'] as number
 	const label = ep['label'] as string
 	const role = getRoleFromEndpoint(instance, id)
-	const roleName = role ? ` - ${(role['label'] as string | undefined) ?? (role['name'] as string)}` : ''
+	const roleName = role ? ` - ${role['label'] as string}` : ''
 	return `${label} (${id})${roleName}`
 }
 
 // Build role choices: "Name (ID)"
-export function roleChoices(instance: ModuleInstance): {
-	id: string
-	label: string
-}[] {
+export function roleChoices(instance: ModuleInstance): { id: string; label: string }[] {
 	_instance = instance
 	return [...instance.rolesets.values()].map((rs) => ({
 		id: String(rs['id'] as number),
@@ -77,10 +84,7 @@ export function roleChoices(instance: ModuleInstance): {
 }
 
 // Build endpoint choices: "Label (ID)" or "Label (ID) - RoleName"
-export function endpointChoices(instance: ModuleInstance): {
-	id: string
-	label: string
-}[] {
+export function endpointChoices(instance: ModuleInstance): { id: string; label: string }[] {
 	_instance = instance
 	return [...instance.endpoints.values()].map((ep) => ({
 		id: String(ep['id'] as number),
@@ -89,10 +93,7 @@ export function endpointChoices(instance: ModuleInstance): {
 }
 
 // Build port choices: "Label (Desc)" e.g. "Andy (2W Port A)"
-export function portChoices(instance: ModuleInstance): {
-	id: string
-	label: string
-}[] {
+export function portChoices(instance: ModuleInstance): { id: string; label: string }[] {
 	_instance = instance
 	return [...instance.ports.values()].map((p) => ({
 		id: String(p['port_id'] as number),
@@ -101,6 +102,25 @@ export function portChoices(instance: ModuleInstance): {
 }
 
 // ─── Generic field write (walks ControlDef) ───────────────────────────────────
+
+// Resolve a value for inc/dec mode given the current value and value type.
+function resolveIncDec(
+	current: unknown,
+	vt: import('./types.js').SettingValueType,
+	mode: 'increment' | 'decrement',
+): unknown {
+	if (vt.kind === 'integer') {
+		const cur = (current as number) ?? 0
+		const next = mode === 'increment' ? cur + vt.step : cur - vt.step
+		return Math.min(vt.max, Math.max(vt.min, next))
+	}
+	if (vt.kind === 'number-enum') {
+		const idx = vt.values.indexOf(current as number)
+		const next = mode === 'increment' ? idx + 1 : idx - 1
+		return vt.values[Math.min(vt.values.length - 1, Math.max(0, next))]
+	}
+	return current
+}
 
 export async function executeWrite(
 	instance: ModuleInstance,
@@ -121,21 +141,9 @@ export async function executeWrite(
 	let resolvedValue = value
 
 	if (mode !== 'absolute' && def.supportsIncDec && def.read) {
-		// Determine effective value type — check perTypeOverride first
 		const portType = record['port_config_type'] as string | undefined
 		const vt = (portType ? def.perTypeOverride?.[portType] : undefined) ?? def.valueType
-
-		const currentValue = getField(record, def.read.field)
-
-		if (vt.kind === 'integer') {
-			const cur = (currentValue as number) ?? 0
-			const next = mode === 'increment' ? cur + vt.step : cur - vt.step
-			resolvedValue = Math.min(vt.max, Math.max(vt.min, next))
-		} else if (vt.kind === 'number-enum') {
-			const idx = vt.values.indexOf(currentValue as number)
-			const next = mode === 'increment' ? idx + 1 : idx - 1
-			resolvedValue = vt.values[Math.min(vt.values.length - 1, Math.max(0, next))]
-		}
+		resolvedValue = resolveIncDec(getField(record, def.read.field), vt, mode)
 	}
 
 	const res = record['res'] as string
@@ -148,7 +156,6 @@ export async function executeWrite(
 	try {
 		await putRequest(url, instance, body)
 		log.info(`executeWrite ${def.id} record=${recordId} value=${JSON.stringify(resolvedValue)}`)
-		// Refresh the store after write
 		await callFetch(instance, def.write.fetchFn, record['gid'] as string | undefined)
 	} catch (error) {
 		log.error(`executeWrite ${def.id} record=${recordId} failed: ${String(error)}`)
@@ -158,16 +165,71 @@ export async function executeWrite(
 async function callFetch(instance: ModuleInstance, fetchFn: string, gid?: string): Promise<void> {
 	switch (fetchFn) {
 		case 'fetchPorts':
-			return gid ? fetchPortsGids(instance, [gid]) : fetchPorts(instance)
+			await (gid ? fetchPortsGids(instance, [gid]) : fetchPorts(instance))
+			break
 		case 'fetchEndpoints':
-			return gid ? fetchEndpointsGids(instance, [gid]) : fetchEndpoints(instance)
+			await (gid ? fetchEndpointsGids(instance, [gid]) : fetchEndpoints(instance))
+			break
 		case 'fetchRolesets':
-			return gid ? fetchRolesetsGids(instance, [gid]) : fetchRolesets(instance)
+			await (gid ? fetchRolesetsGids(instance, [gid]) : fetchRolesets(instance))
+			break
 		case 'fetchKeysets':
-			return gid ? fetchKeysetsGids(instance, [gid]) : fetchKeysets(instance)
-		default:
-			return Promise.resolve()
+			await (gid ? fetchKeysetsGids(instance, [gid]) : fetchKeysets(instance))
+			break
 	}
+	instance.rebuildIfChanged()
+}
+
+// ─── Shared keyset write scaffolding ─────────────────────────────────────────
+
+// Iterates roleIds, resolves each to a keyset, calls buildEntry to get the body
+// entry, then PUTs the collected body to /api/2/keysets and refreshes the store.
+async function putKeysets(
+	instance: ModuleInstance,
+	roleIds: number[],
+	deviceType: string,
+	logTag: string,
+	buildEntry: (keyset: DeviceRecord, keysetId: number) => Record<string, unknown> | null,
+): Promise<void> {
+	const url = `http://${instance.config.host}/api/2/keysets`
+	const body: Record<string, unknown> = {}
+
+	for (const roleId of roleIds) {
+		const keysetId = findKeysetIdForRole(instance, roleId, deviceType)
+		if (keysetId === undefined) {
+			log.warn(`${logTag}: no matching keyset for role ${roleId} deviceType=${deviceType}`)
+			continue
+		}
+		const keyset = instance.keysets.get(keysetId)
+		if (!keyset) {
+			log.warn(`${logTag}: no cached keyset ${keysetId}`)
+			continue
+		}
+		const entry = buildEntry(keyset, keysetId)
+		if (entry) body[String(keysetId)] = entry
+	}
+
+	if (Object.keys(body).length === 0) return
+
+	try {
+		await putRequest(url, instance, body)
+		log.info(`${logTag}: ok`)
+		await fetchKeysets(instance)
+		instance.rebuildIfChanged()
+	} catch (error) {
+		log.error(`${logTag} failed: ${String(error)}`)
+	}
+}
+
+// Find the endpoint ID currently online for a given role ID.
+// Returns null if no online beltpack is assigned to that role.
+function findEndpointForRole(instance: ModuleInstance, roleId: number): number | null {
+	return (
+		[...instance.endpointStatus.keys()].find((id) => {
+			const association = instance.endpointStatus.get(id)?.['association'] as DeviceRecord | undefined
+			return (association?.['dpId'] as number | undefined) === roleId
+		}) ?? null
+	)
 }
 
 // ─── Keyset write (bulk PUT to /api/2/keysets) ────────────────────────────────
@@ -178,61 +240,27 @@ export async function setKeyset(
 	def: ControlDef,
 	value: unknown,
 	mode: 'absolute' | 'increment' | 'decrement' = 'absolute',
+	deviceType?: string,
 ): Promise<void> {
-	const url = `http://${instance.config.host}/api/2/keysets`
-	const body: Record<string, unknown> = {}
+	if (deviceType === undefined) {
+		log.warn(`setKeyset ${def.id}: deviceType is undefined — refusing to write to avoid targeting wrong keyset`)
+		return
+	}
+	if (!DEVICE_TYPE_TO_KEYSET_TYPE[deviceType]) {
+		log.warn(`setKeyset ${def.id}: no keyset types mapped for deviceType=${deviceType}`)
+		return
+	}
 
-	for (const roleId of roleIds) {
-		const roleset = instance.rolesets.get(roleId)
-		if (!roleset) {
-			log.warn(`setKeyset: no roleset for role ${roleId}`)
-			continue
-		}
-		const sessions = roleset['sessions'] as DeviceRecord | undefined
-		const firstSession = sessions ? (Object.values(sessions)[0] as DeviceRecord | undefined) : undefined
-		const keysetId = (firstSession?.['data'] as DeviceRecord | undefined)?.['settings'] as DeviceRecord | undefined
-		const defaultRoleId = keysetId?.['defaultRole'] as number | undefined
-		if (defaultRoleId === undefined) {
-			log.warn(`setKeyset: no defaultRole for role ${roleId}`)
-			continue
-		}
-
-		const keyset = instance.keysets.get(defaultRoleId)
-		if (!keyset) {
-			log.warn(`setKeyset: no cached keyset ${defaultRoleId}`)
-			continue
-		}
-
+	await putKeysets(instance, roleIds, deviceType, `setKeyset ${def.id}`, (keyset) => {
 		let resolvedValue = value
 		if (mode !== 'absolute' && def.supportsIncDec && def.read) {
-			const currentValue = getField(keyset, def.read.field)
-			const vt = def.valueType
-			if (vt.kind === 'integer') {
-				const cur = (currentValue as number) ?? 0
-				const next = mode === 'increment' ? cur + vt.step : cur - vt.step
-				resolvedValue = Math.min(vt.max, Math.max(vt.min, next))
-			} else if (vt.kind === 'number-enum') {
-				const idx = vt.values.indexOf(currentValue as number)
-				const next = mode === 'increment' ? idx + 1 : idx - 1
-				resolvedValue = vt.values[Math.min(vt.values.length - 1, Math.max(0, next))]
-			}
+			resolvedValue = resolveIncDec(getField(keyset, def.read.field), def.valueType, mode)
 		}
-
 		const isTopLevel = def.write!.keysetBodyLevel === 'top'
-		body[String(defaultRoleId)] = isTopLevel
+		return isTopLevel
 			? { type: keyset['type'], [def.write!.bodyKey]: resolvedValue }
 			: { type: keyset['type'], settings: { [def.write!.bodyKey]: resolvedValue } }
-	}
-
-	if (Object.keys(body).length === 0) return
-
-	try {
-		await putRequest(url, instance, body)
-		log.info(`setKeyset ${def.id}: ok`)
-		await fetchKeysets(instance)
-	} catch (error) {
-		log.error(`setKeyset ${def.id} failed: ${String(error)}`)
-	}
+	})
 }
 
 // ─── Key assignment ───────────────────────────────────────────────────────────
@@ -245,8 +273,8 @@ function resolveKeyEntity(instance: ModuleInstance, assignTo: string): KeyEntity
 	const id = Number(idStr)
 	if (kind === 'conn') {
 		const conn = instance.connections.get(id)
-		const res = (conn?.['res'] as string | undefined) ?? `/api/1/connections/${id}`
-		return [{ res, type: 0 }]
+		if (!conn) return []
+		return [{ res: conn['res'] as string, type: 0 }]
 	}
 	if (kind === 'role') {
 		return instance.rolesets.has(id) ? [{ res: `/api/2/rolesets/${id}`, type: 3 }] : []
@@ -265,25 +293,12 @@ export async function assignKeyChannel(
 	instance: ModuleInstance,
 	roleIds: number[],
 	keyIndex: number,
-	assignTo: string, // 'conn:{id}' | 'role:{id}' | 'port:{id}' | 'special:call' | ''
+	assignTo: string,
 	activationState: string,
 	talkBtnMode: string,
+	deviceType: string,
 ): Promise<void> {
-	const url = `http://${instance.config.host}/api/2/keysets`
-	const body: Record<string, unknown> = {}
-
-	for (const roleId of roleIds) {
-		const roleset = instance.rolesets.get(roleId)
-		if (!roleset) continue
-		const sessions = roleset['sessions'] as DeviceRecord | undefined
-		const firstSession = sessions ? (Object.values(sessions)[0] as DeviceRecord | undefined) : undefined
-		const settingsObj = (firstSession?.['data'] as DeviceRecord | undefined)?.['settings'] as DeviceRecord | undefined
-		const defaultRoleId = settingsObj?.['defaultRole'] as number | undefined
-		if (defaultRoleId === undefined) continue
-
-		const keyset = instance.keysets.get(defaultRoleId)
-		if (!keyset) continue
-
+	await putKeysets(instance, roleIds, deviceType, `assignKeyChannel key=${keyIndex}`, (keyset) => {
 		const currentSlots = ((keyset['settings'] as DeviceRecord)?.['keysets'] as DeviceRecord[] | undefined) ?? []
 		const updatedSlots = currentSlots.map((slot) => {
 			if ((slot['keysetIndex'] as number) !== keyIndex) return slot
@@ -295,19 +310,8 @@ export async function assignKeyChannel(
 				talkBtnMode,
 			}
 		})
-
-		body[String(defaultRoleId)] = { type: keyset['type'], settings: { keysets: updatedSlots } }
-	}
-
-	if (Object.keys(body).length === 0) return
-
-	try {
-		await putRequest(url, instance, body)
-		log.info(`assignKeyChannel key=${keyIndex}: ok`)
-		await fetchKeysets(instance)
-	} catch (error) {
-		log.error(`assignKeyChannel key=${keyIndex} failed: ${String(error)}`)
-	}
+		return { type: keyset['type'], settings: { keysets: updatedSlots } }
+	})
 }
 
 // ─── RMK ─────────────────────────────────────────────────────────────────────
@@ -317,12 +321,7 @@ export async function remoteMicKill(instance: ModuleInstance, roleId: string): P
 	let endpointId: number | null = null
 
 	if (roleId) {
-		endpointId =
-			[...instance.endpointStatus.keys()].find((id) => {
-				const status = instance.endpointStatus.get(id)
-				const association = status?.['association'] as DeviceRecord | undefined
-				return (association?.['dpId'] as number | undefined) === Number(roleId)
-			}) ?? null
+		endpointId = findEndpointForRole(instance, Number(roleId))
 		if (endpointId === null) {
 			log.warn(`RMK: no online beltpack for role ${roleId}`)
 			return
@@ -347,18 +346,12 @@ export async function sendCall(instance: ModuleInstance, roleId: string, active:
 	let gid: string | null = null
 
 	if (roleId) {
-		const epId =
-			[...instance.endpointStatus.keys()].find((id) => {
-				const status = instance.endpointStatus.get(id)
-				const association = status?.['association'] as DeviceRecord | undefined
-				return (association?.['dpId'] as number | undefined) === Number(roleId)
-			}) ?? null
-		if (epId === null) {
+		endpointId = findEndpointForRole(instance, Number(roleId))
+		if (endpointId === null) {
 			log.warn(`Call: no online beltpack for role ${roleId}`)
 			return
 		}
-		endpointId = epId
-		gid = (instance.endpointStatus.get(epId)?.['gid'] as string) ?? null
+		gid = (instance.endpointStatus.get(endpointId)?.['gid'] as string) ?? null
 	}
 
 	const epSegment = endpointId !== null ? `/${endpointId}` : ''
@@ -410,15 +403,7 @@ async function pollNulling(instance: ModuleInstance, portId: number, url: string
 	}
 }
 
-// ─── Endpoint role / association ──────────────────────────────────────────────
-
-export async function changeEndpointRole(instance: ModuleInstance, endpointId: number, roleId: number): Promise<void> {
-	_instance = instance
-	const ep = instance.endpoints.get(endpointId)
-	if (!ep) return
-	const url = `http://${instance.config.host}${ep['res'] as string}/changerole`
-	await postRequest(url, instance, { roleId })
-}
+// ─── Endpoint association ─────────────────────────────────────────────────────
 
 export async function changeEndpointAssociation(
 	instance: ModuleInstance,
@@ -429,4 +414,13 @@ export async function changeEndpointAssociation(
 	if (!ep) return
 	const url = `http://${instance.config.host}${ep['res'] as string}/changeassociation`
 	await postRequest(url, instance, { gid: ep['gid'], association: { gid: rolesetGid } })
+	const gid = ep['gid'] as string | undefined
+	if (gid) {
+		await fetchEndpointsGids(instance, [gid])
+	} else {
+		await fetchEndpoints(instance)
+	}
+	// Force rebuild regardless of fingerprint — association change in liveStatus
+	// may not be reflected yet in endpointStatus at this point.
+	instance.forceRebuild()
 }

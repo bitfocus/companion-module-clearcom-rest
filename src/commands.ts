@@ -3,9 +3,6 @@ import { ControlDef } from './types.js'
 import { connectSocket, disconnectSocket } from './network.js'
 
 // ─── Device dispatch ──────────────────────────────────────────────────────────
-// All device-specific socket connect/disconnect goes through here.
-// When freespeak.ts / edge.ts are added, switch on instance.config.deviceType
-// and import the appropriate module's connect/disconnect instead.
 
 export function connect(instance: ModuleInstance): void {
 	connectSocket(instance)
@@ -15,7 +12,7 @@ export function disconnect(): void {
 	disconnectSocket()
 }
 
-// ─── Schema-level skip lists ─────────────────────────────────────────────────
+// ─── Schema-level skip lists ──────────────────────────────────────────────────
 // Raw property keys excluded during schema parsing, before ControlDef IDs exist.
 // Add keys here to suppress entire categories of schema-derived fields.
 

@@ -26,69 +26,74 @@ async function enqueue<T>(fn: () => Promise<T>): Promise<T> {
 
 // ─── HTTP ─────────────────────────────────────────────────────────────────────
 
+/** Thrown for non-2xx responses. Already logged by handleErrorResponse — callers should not re-log. */
+export class DeviceRequestError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = 'DeviceRequestError'
+	}
+}
+
+async function handleErrorResponse(response: Response, method: string, url: string): Promise<never> {
+	const shortUrl = url.replace(/.*\/api/, '/api')
+	const statusLine = `${method} ${shortUrl} rejected: ${response.status} ${response.statusText}`
+	let detail: string | undefined
+	try {
+		const body = (await response.json()) as Record<string, unknown>
+		detail = (body['message'] ?? body['error'] ?? body['msg']) as string | undefined
+	} catch {
+		// not JSON — ignore
+	}
+	log.debug(statusLine)
+	if (detail) log.error(detail)
+	throw new DeviceRequestError(detail ?? statusLine)
+}
+
 function buildHeaders(instance: ModuleInstance): Record<string, string> {
 	const headers: Record<string, string> = { Accept: 'application/json' }
 	if (instance.bearerToken) headers['Authorization'] = `Bearer ${instance.bearerToken}`
 	return headers
 }
 
-export async function getRequest<R>(url: string, instance: ModuleInstance): Promise<R> {
+async function executeRequest<R>(
+	method: 'GET' | 'POST' | 'PUT',
+	url: string,
+	instance: ModuleInstance,
+	body?: unknown,
+): Promise<R> {
 	return enqueue(async () => {
-		log.info(`→ GET ${url.replace(/.*\/api/, '/api')}`)
-		log.debug(`→ GET ${url}`)
-		const response = await fetch(url, { method: 'GET', headers: buildHeaders(instance) })
+		const shortUrl = url.replace(/.*\/api/, '/api')
+		log.info(`→ ${method} ${shortUrl}`)
+		log.debug(`→ ${method} ${shortUrl}${body !== undefined ? ` ${JSON.stringify(body)}` : ''}`)
+		const init: RequestInit = {
+			method,
+			headers:
+				body !== undefined ? { ...buildHeaders(instance), 'Content-Type': 'application/json' } : buildHeaders(instance),
+		}
+		if (body !== undefined) init.body = JSON.stringify(body)
+		const response = await fetch(url, init)
 		if (response.status === 401) {
 			void reLogin(instance)
-			throw new Error(`GET ${url} failed: 401 Unauthorized`)
+			throw new Error(`${method} ${url} failed: 401 Unauthorized`)
 		}
-		if (!response.ok) throw new Error(`GET ${url} failed: ${response.status} ${response.statusText}`)
+		if (!response.ok) await handleErrorResponse(response, method, url)
 		resetKeepalive(instance)
 		const result = (await response.json()) as R
-		log.debug(`← GET ${url.replace(/.*\/api/, '/api')} ${JSON.stringify(result)}`)
+		log.debug(`← ${method} ${shortUrl} ${JSON.stringify(result)}`)
 		return result
 	})
+}
+
+export async function getRequest<R>(url: string, instance: ModuleInstance): Promise<R> {
+	return executeRequest<R>('GET', url, instance)
 }
 
 export async function postRequest<R>(url: string, instance: ModuleInstance, body: unknown = {}): Promise<R> {
-	return enqueue(async () => {
-		log.info(`→ POST ${url.replace(/.*\/api/, '/api')}`)
-		log.debug(`→ POST ${url.replace(/.*\/api/, '/api')} ${JSON.stringify(body)}`)
-		const response = await fetch(url, {
-			method: 'POST',
-			headers: { ...buildHeaders(instance), 'Content-Type': 'application/json' },
-			body: JSON.stringify(body),
-		})
-		if (response.status === 401) {
-			void reLogin(instance)
-			throw new Error(`POST ${url} failed: 401 Unauthorized`)
-		}
-		if (!response.ok) throw new Error(`POST ${url} failed: ${response.status} ${response.statusText}`)
-		resetKeepalive(instance)
-		const result = (await response.json()) as R
-		log.debug(`← POST ${url.replace(/.*\/api/, '/api')} ${JSON.stringify(result)}`)
-		return result
-	})
+	return executeRequest<R>('POST', url, instance, body)
 }
 
 export async function putRequest<R>(url: string, instance: ModuleInstance, body: unknown = {}): Promise<R> {
-	return enqueue(async () => {
-		log.info(`→ PUT ${url.replace(/.*\/api/, '/api')}`)
-		log.debug(`→ PUT ${url.replace(/.*\/api/, '/api')} ${JSON.stringify(body)}`)
-		const response = await fetch(url, {
-			method: 'PUT',
-			headers: { ...buildHeaders(instance), 'Content-Type': 'application/json' },
-			body: JSON.stringify(body),
-		})
-		if (response.status === 401) {
-			void reLogin(instance)
-			throw new Error(`PUT ${url} failed: 401 Unauthorized`)
-		}
-		if (!response.ok) throw new Error(`PUT ${url} failed: ${response.status} ${response.statusText}`)
-		resetKeepalive(instance)
-		const result = (await response.json()) as R
-		log.debug(`← PUT ${url.replace(/.*\/api/, '/api')} ${JSON.stringify(result)}`)
-		return result
-	})
+	return executeRequest<R>('PUT', url, instance, body)
 }
 
 // ─── Keepalive / token refresh ────────────────────────────────────────────────
@@ -103,20 +108,34 @@ export function resetKeepalive(instance: ModuleInstance): void {
 	}, KEEPALIVE_MS)
 }
 
-function getTokenVersion(token: string): number {
+function getTokenVersion(token: string): number | undefined {
+	const payload = token.split('.')[1]
+	if (!payload) {
+		log.warn('getTokenVersion: malformed JWT — no payload segment')
+		return undefined
+	}
 	try {
-		const payload = token.split('.')[1]
 		const decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')) as { ver?: number }
-		return decoded.ver ?? 1
-	} catch {
-		return 1
+		if (decoded.ver === undefined) {
+			log.warn('getTokenVersion: JWT payload has no ver field')
+			return undefined
+		}
+		return decoded.ver
+	} catch (err) {
+		log.warn(`getTokenVersion: failed to parse JWT payload: ${String(err)}`)
+		return undefined
 	}
 }
 
 async function refreshToken(instance: ModuleInstance): Promise<void> {
 	try {
+		const ver = getTokenVersion(instance.bearerToken)
+		if (ver === undefined) {
+			log.warn('refreshToken: cannot determine token version — skipping refresh')
+			return
+		}
 		const response = await postRequest<{ jwt: string }>(`http://${instance.config.host}/auth/refresh`, instance, {
-			jwtversion: getTokenVersion(instance.bearerToken),
+			jwtversion: ver,
 		})
 		instance.bearerToken = response.jwt
 		log.debug('Token refreshed')
@@ -155,13 +174,26 @@ async function reLogin(instance: ModuleInstance): Promise<void> {
 // Each fetch populates its store with DeviceRecord entries.
 // After updating, feedback checks are triggered where applicable.
 
+// Shared helper: fetch a list of DeviceRecords, optionally scoped to gids.
+// If clearFirst is true the store is cleared before populating (full refresh).
+async function fetchRecords(
+	instance: ModuleInstance,
+	url: string,
+	process: (records: DeviceRecord[]) => void,
+	triggerStores: string[],
+): Promise<void> {
+	const response = await getRequest<DeviceRecord[]>(url, instance)
+	process(response)
+	for (const store of triggerStores) instance.triggerFeedbacksForStore(store)
+}
+
 export async function fetchDevice(instance: ModuleInstance): Promise<void> {
 	try {
 		const response = await getRequest<DeviceInfo>(`http://${instance.config.host}/api/1/devices/1`, instance)
 		instance.deviceInfo = response
 		instance.updateVariables()
 		log.info(
-			`Device: ${response.deviceType_name} "${response.device_label}" fw=${response.device_versionSW ?? response.versionSW ?? '?'}`,
+			`Device: ${response.deviceType_name} "${response.device_label}" fw=${response.device_versionSW ?? response.versionSW}`,
 		)
 	} catch (error) {
 		log.error(`fetchDevice failed: ${String(error)}`)
@@ -170,18 +202,18 @@ export async function fetchDevice(instance: ModuleInstance): Promise<void> {
 
 export async function fetchPorts(instance: ModuleInstance): Promise<void> {
 	try {
-		const response = await getRequest<DeviceRecord[]>(
-			`http://${instance.config.host}/api/1/devices/interfaces/ports`,
+		await fetchRecords(
 			instance,
+			`http://${instance.config.host}/api/1/devices/interfaces/ports`,
+			(records) => {
+				instance.ports.clear()
+				for (const port of records) instance.ports.set(port['port_id'] as number, port)
+				log.info(
+					`Ports loaded: ${[...instance.ports.values()].map((p) => `${p['port_id'] as string}:${p['port_label'] as string}(${(p['port_config_type'] as string | undefined) ?? '?'})`).join(', ')}`,
+				)
+			},
+			['ports'],
 		)
-		instance.ports.clear()
-		for (const port of response) {
-			instance.ports.set(port['port_id'] as number, port)
-		}
-		log.info(
-			`Ports loaded: ${[...instance.ports.values()].map((p) => `${p['port_id'] as string}:${p['port_label'] as string}(${(p['port_config_type'] as string | undefined) ?? '?'})`).join(', ')}`,
-		)
-		instance.triggerFeedbacksForStore('ports')
 	} catch (error) {
 		log.error(`fetchPorts failed: ${String(error)}`)
 	}
@@ -190,41 +222,44 @@ export async function fetchPorts(instance: ModuleInstance): Promise<void> {
 export async function fetchPortsGids(instance: ModuleInstance, gids: string[]): Promise<void> {
 	if (gids.length === 0) return
 	try {
-		const response = await getRequest<DeviceRecord[]>(
-			`http://${instance.config.host}/api/1/devices/interfaces/ports?gids=${gids.join(',')}`,
+		await fetchRecords(
 			instance,
+			`http://${instance.config.host}/api/1/devices/interfaces/ports?gids=${gids.join(',')}`,
+			(records) => {
+				for (const port of records) instance.ports.set(port['port_id'] as number, port)
+			},
+			['ports'],
 		)
-		for (const port of response) {
-			instance.ports.set(port['port_id'] as number, port)
-		}
-		instance.triggerFeedbacksForStore('ports')
 	} catch (error) {
 		log.error(`fetchPortsGids failed: ${String(error)}`)
 	}
 }
 
+function processEndpoints(instance: ModuleInstance, records: DeviceRecord[]): void {
+	for (const ep of records) {
+		const id = ep['id'] as number
+		if (ep['isGateway']) {
+			instance.gateways.set(id, ep)
+		} else {
+			instance.endpoints.set(id, ep)
+			const live = ep['liveStatus'] as DeviceRecord | undefined
+			if (live && Object.keys(live).length > 0) instance.endpointStatus.set(id, live)
+		}
+	}
+}
+
 export async function fetchEndpoints(instance: ModuleInstance): Promise<void> {
 	try {
-		const response = await getRequest<DeviceRecord[]>(
-			`http://${instance.config.host}/api/1/devices/endpoints`,
+		await fetchRecords(
 			instance,
+			`http://${instance.config.host}/api/1/devices/endpoints`,
+			(records) => {
+				instance.endpoints.clear()
+				instance.gateways.clear()
+				processEndpoints(instance, records)
+			},
+			['endpoints', 'endpointStatus'],
 		)
-		instance.endpoints.clear()
-		instance.gateways.clear()
-		for (const ep of response) {
-			const id = ep['id'] as number
-			if (ep['isGateway']) {
-				instance.gateways.set(id, ep)
-			} else {
-				instance.endpoints.set(id, ep)
-				const live = ep['liveStatus'] as DeviceRecord | undefined
-				if (live && Object.keys(live).length > 0) {
-					instance.endpointStatus.set(id, live)
-				}
-			}
-		}
-		instance.triggerFeedbacksForStore('endpoints')
-		instance.triggerFeedbacksForStore('endpointStatus')
 	} catch (error) {
 		log.error(`fetchEndpoints failed: ${String(error)}`)
 	}
@@ -233,24 +268,14 @@ export async function fetchEndpoints(instance: ModuleInstance): Promise<void> {
 export async function fetchEndpointsGids(instance: ModuleInstance, gids: string[]): Promise<void> {
 	if (gids.length === 0) return
 	try {
-		const response = await getRequest<DeviceRecord[]>(
-			`http://${instance.config.host}/api/1/devices/endpoints?gids=${gids.join(',')}`,
+		await fetchRecords(
 			instance,
+			`http://${instance.config.host}/api/1/devices/endpoints?gids=${gids.join(',')}`,
+			(records) => {
+				processEndpoints(instance, records)
+			},
+			['endpoints', 'endpointStatus'],
 		)
-		for (const ep of response) {
-			const id = ep['id'] as number
-			if (ep['isGateway']) {
-				instance.gateways.set(id, ep)
-			} else {
-				instance.endpoints.set(id, ep)
-				const live = ep['liveStatus'] as DeviceRecord | undefined
-				if (live && Object.keys(live).length > 0) {
-					instance.endpointStatus.set(id, live)
-				}
-			}
-		}
-		instance.triggerFeedbacksForStore('endpoints')
-		instance.triggerFeedbacksForStore('endpointStatus')
 	} catch (error) {
 		log.error(`fetchEndpointsGids failed: ${String(error)}`)
 	}
@@ -258,13 +283,16 @@ export async function fetchEndpointsGids(instance: ModuleInstance, gids: string[
 
 export async function fetchRolesets(instance: ModuleInstance): Promise<void> {
 	try {
-		const response = await getRequest<DeviceRecord[]>(`http://${instance.config.host}/api/2/rolesets`, instance)
-		instance.rolesets.clear()
-		for (const rs of response) {
-			instance.rolesets.set(rs['id'] as number, rs)
-		}
-		log.info(`Rolesets loaded: ${[...instance.rolesets.values()].map((r) => `${r['id']}:${r['name']}`).join(', ')}`)
-		instance.triggerFeedbacksForStore('rolesets')
+		await fetchRecords(
+			instance,
+			`http://${instance.config.host}/api/2/rolesets`,
+			(records) => {
+				instance.rolesets.clear()
+				for (const rs of records) instance.rolesets.set(rs['id'] as number, rs)
+				log.info(`Rolesets loaded: ${[...instance.rolesets.values()].map((r) => `${r['id']}:${r['name']}`).join(', ')}`)
+			},
+			['rolesets'],
+		)
 	} catch (error) {
 		log.error(`fetchRolesets failed: ${String(error)}`)
 	}
@@ -273,14 +301,14 @@ export async function fetchRolesets(instance: ModuleInstance): Promise<void> {
 export async function fetchRolesetsGids(instance: ModuleInstance, gids: string[]): Promise<void> {
 	if (gids.length === 0) return
 	try {
-		const response = await getRequest<DeviceRecord[]>(
-			`http://${instance.config.host}/api/2/rolesets?gids=${gids.join(',')}`,
+		await fetchRecords(
 			instance,
+			`http://${instance.config.host}/api/2/rolesets?gids=${gids.join(',')}`,
+			(records) => {
+				for (const rs of records) instance.rolesets.set(rs['id'] as number, rs)
+			},
+			['rolesets'],
 		)
-		for (const rs of response) {
-			instance.rolesets.set(rs['id'] as number, rs)
-		}
-		instance.triggerFeedbacksForStore('rolesets')
 	} catch (error) {
 		log.error(`fetchRolesetsGids failed: ${String(error)}`)
 	}
@@ -288,13 +316,16 @@ export async function fetchRolesetsGids(instance: ModuleInstance, gids: string[]
 
 export async function fetchKeysets(instance: ModuleInstance): Promise<void> {
 	try {
-		const response = await getRequest<DeviceRecord[]>(`http://${instance.config.host}/api/2/keysets`, instance)
-		instance.keysets.clear()
-		for (const ks of response) {
-			instance.keysets.set(ks['id'] as number, ks)
-		}
-		log.info(`Keysets loaded: ${[...instance.keysets.keys()].join(', ')}`)
-		instance.triggerFeedbacksForStore('keysets')
+		await fetchRecords(
+			instance,
+			`http://${instance.config.host}/api/2/keysets`,
+			(records) => {
+				instance.keysets.clear()
+				for (const ks of records) instance.keysets.set(ks['id'] as number, ks)
+				log.info(`Keysets loaded: ${[...instance.keysets.keys()].join(', ')}`)
+			},
+			['keysets'],
+		)
 	} catch (error) {
 		log.error(`fetchKeysets failed: ${String(error)}`)
 	}
@@ -303,14 +334,14 @@ export async function fetchKeysets(instance: ModuleInstance): Promise<void> {
 export async function fetchKeysetsGids(instance: ModuleInstance, gids: string[]): Promise<void> {
 	if (gids.length === 0) return
 	try {
-		const response = await getRequest<DeviceRecord[]>(
-			`http://${instance.config.host}/api/2/keysets?gids=${gids.join(',')}`,
+		await fetchRecords(
 			instance,
+			`http://${instance.config.host}/api/2/keysets?gids=${gids.join(',')}`,
+			(records) => {
+				for (const ks of records) instance.keysets.set(ks['id'] as number, ks)
+			},
+			['keysets'],
 		)
-		for (const ks of response) {
-			instance.keysets.set(ks['id'] as number, ks)
-		}
-		instance.triggerFeedbacksForStore('keysets')
 	} catch (error) {
 		log.error(`fetchKeysetsGids failed: ${String(error)}`)
 	}
@@ -318,18 +349,18 @@ export async function fetchKeysetsGids(instance: ModuleInstance, gids: string[])
 
 export async function fetchConnections(instance: ModuleInstance): Promise<void> {
 	try {
-		const response = await getRequest<DeviceRecord[]>(
-			`http://${instance.config.host}/api/1/connections/liveStatus`,
+		await fetchRecords(
 			instance,
+			`http://${instance.config.host}/api/1/connections/liveStatus`,
+			(records) => {
+				instance.connections.clear()
+				for (const conn of records) instance.connections.set(conn['id'] as number, conn)
+				log.info(
+					`Connections loaded: ${[...instance.connections.values()].map((c) => `${c['id'] as string}:${c['label'] as string}`).join(', ')}`,
+				)
+			},
+			['connections'],
 		)
-		instance.connections.clear()
-		for (const conn of response) {
-			instance.connections.set(conn['id'] as number, conn)
-		}
-		log.info(
-			`Connections loaded: ${[...instance.connections.values()].map((c) => `${c['id'] as string}:${c['label'] as string}`).join(', ')}`,
-		)
-		instance.triggerFeedbacksForStore('connections')
 	} catch (error) {
 		log.error(`fetchConnections failed: ${String(error)}`)
 	}
@@ -349,17 +380,16 @@ function handleEndpointUpdated(instance: ModuleInstance, event: EndpointUpdatedE
 		const isOffline = !isEmpty && value['status'] !== 'online'
 
 		if (isEmpty || isOffline) {
-			const offlineRole = instance.rolesets.get(
-				((existing['association'] as DeviceRecord | undefined)?.['dpId'] as number) ?? -1,
-			)
+			const dpId = (existing['association'] as DeviceRecord | undefined)?.['dpId'] as number | undefined
+			const offlineRole = dpId !== undefined ? instance.rolesets.get(dpId) : undefined
 			instance.endpointStatus.delete(endpointId)
-			log.info(`Beltpack ${endpointId} role=${(offlineRole?.['name'] as string | undefined) ?? 'unknown'} offline`)
+			log.info(`Beltpack ${endpointId} role=${offlineRole?.['name'] as string | undefined} offline`)
 		} else {
 			const merged: DeviceRecord = { ...existing, ...value }
 			instance.endpointStatus.set(endpointId, merged)
 			const role = instance.rolesets.get((merged['association'] as DeviceRecord | undefined)?.['dpId'] as number)
 			log.debug(
-				`Beltpack ${endpointId}: status=${merged['status'] as string} role=${(role?.['name'] as string | undefined) ?? 'unknown'} ` +
+				`Beltpack ${endpointId}: status=${merged['status'] as string} role=${role?.['name'] as string | undefined} ` +
 					`battery=${merged['batteryLevel'] as string}% rssi=${merged['rssi'] as string} ` +
 					`linkQuality=${merged['linkQuality'] as string}`,
 			)
@@ -424,6 +454,11 @@ async function initialFetch(instance: ModuleInstance, gen: number): Promise<void
 
 // ─── Socket ───────────────────────────────────────────────────────────────────
 
+async function fetchAndRebuild(instance: ModuleInstance, fetch: Promise<void>): Promise<void> {
+	await fetch
+	instance.rebuildIfChanged()
+}
+
 let socket: Socket | null = null
 
 const HANDLED_EVENTS = new Set([
@@ -475,40 +510,39 @@ export function connectSocket(instance: ModuleInstance): void {
 
 	socket.on('live:connections', (_data: unknown) => {
 		log.debug('live:connections — refreshing')
-		void fetchConnections(instance)
+		void fetchAndRebuild(instance, fetchConnections(instance))
 	})
 
 	socket.on('live:roles', (_data: unknown) => {
 		log.debug('live:roles — refreshing keysets')
-		void fetchKeysets(instance)
-		// Role associations may have changed — rebuild choices
-		void fetchRolesets(instance).then(() => {
-			instance.rebuildIfChanged()
-		})
+		void fetchAndRebuild(
+			instance,
+			Promise.all([fetchKeysets(instance), fetchRolesets(instance)]).then(() => undefined),
+		)
 	})
 
 	socket.on('live:rolesets', (data: unknown) => {
 		const rolesets = (data as Record<string, unknown>)?.['rolesets'] as { gid: string }[] | undefined
 		const gids = rolesets?.map((r) => r.gid) ?? []
-		void fetchRolesetsGids(instance, gids)
+		void fetchAndRebuild(instance, fetchRolesetsGids(instance, gids))
 	})
 
 	socket.on('live:ports', (data: unknown) => {
 		const gids = (data as Record<string, unknown>)?.['gids'] as string[] | undefined
 		if (gids && gids.length > 0) {
-			void fetchPortsGids(instance, gids)
+			void fetchAndRebuild(instance, fetchPortsGids(instance, gids))
 		} else {
 			log.debug('live:ports — refreshing all')
-			void fetchPorts(instance)
+			void fetchAndRebuild(instance, fetchPorts(instance))
 		}
 	})
 
 	socket.on('live:endpoints', (data: unknown) => {
 		const gids = (data as Record<string, unknown>)?.['gids'] as string[] | undefined
 		if (gids && gids.length > 0) {
-			void fetchEndpointsGids(instance, gids)
+			void fetchAndRebuild(instance, fetchEndpointsGids(instance, gids))
 		} else {
-			void fetchEndpoints(instance)
+			void fetchAndRebuild(instance, fetchEndpoints(instance))
 		}
 	})
 

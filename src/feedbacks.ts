@@ -4,7 +4,7 @@ import {
 	JsonValue,
 } from '@companion-module/base'
 import ModuleInstance from './main.js'
-import { getField, roleChoices, endpointChoices, portChoices } from './arcadia.js'
+import { getField, roleChoices, endpointChoices, portChoices, findKeysetIdForRole } from './arcadia.js'
 import { ControlDef, DeviceRecord } from './types.js'
 import { drawMeter, MeterStyle } from './indicators.js'
 
@@ -22,15 +22,10 @@ function unsubscribeFn(instance: ModuleInstance) {
 
 // ─── Navigate roleset → keyset ────────────────────────────────────────────────
 
-function getKeysetForRole(instance: ModuleInstance, roleId: number): DeviceRecord | null {
-	const roleset = instance.rolesets.get(roleId)
-	if (!roleset) return null
-	const sessions = roleset['sessions'] as DeviceRecord | undefined
-	const first = sessions ? (Object.values(sessions)[0] as DeviceRecord | undefined) : undefined
-	const settings = (first?.['data'] as DeviceRecord | undefined)?.['settings'] as DeviceRecord | undefined
-	const keysetId = settings?.['defaultRole'] as number | undefined
-	if (keysetId === undefined) return null
-	return instance.keysets.get(keysetId) ?? null
+function getKeysetForRole(instance: ModuleInstance, roleId: number, deviceType?: string): DeviceRecord | null {
+	if (!deviceType) return null
+	const keysetId = findKeysetIdForRole(instance, roleId, deviceType)
+	return keysetId !== undefined ? (instance.keysets.get(keysetId) ?? null) : null
 }
 
 // Get the endpointStatus for a role (via association.dpId)
@@ -62,10 +57,10 @@ function buildDefsFor(
 	const store = def.read.store
 
 	const subjectOption = isPort
-		? { type: 'dropdown', id: 'subjectId', label: 'Port', default: pChoices[0]?.id ?? '', choices: pChoices }
+		? { type: 'dropdown', id: 'subjectId', label: 'Port', default: pChoices[0]?.id, choices: pChoices }
 		: isEndpoint
-			? { type: 'dropdown', id: 'subjectId', label: 'Endpoint', default: epChoices[0]?.id ?? '', choices: epChoices }
-			: { type: 'dropdown', id: 'subjectId', label: 'Role', default: rChoices[0]?.id ?? '', choices: rChoices }
+			? { type: 'dropdown', id: 'subjectId', label: 'Endpoint', default: epChoices[0]?.id, choices: epChoices }
+			: { type: 'dropdown', id: 'subjectId', label: 'Role', default: rChoices[0]?.id, choices: rChoices }
 
 	const typePrefix = def.deviceTypes.length === 1 ? `[${def.deviceTypes[0]}] ` : ''
 	const scopePrefix = isPort ? '[Port] ' : isEndpoint || isLiveStatus ? '[Beltpack] ' : '[Role] '
@@ -81,7 +76,8 @@ function buildDefsFor(
 			return status ? getField(status, def.read!.field) : null
 		}
 		if (isKeyset) {
-			const keyset = getKeysetForRole(instance, subjectId)
+			const deviceType = def.deviceTypes[0]
+			const keyset = getKeysetForRole(instance, subjectId, deviceType)
 			return keyset ? getField(keyset, def.read!.field) : null
 		}
 		if (isEndpoint) {
@@ -154,14 +150,14 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 		type: 'dropdown',
 		id: 'roleId',
 		label: 'Role',
-		default: rChoices[0]?.id ?? '',
+		default: rChoices[0]?.id,
 		choices: rChoices,
 	}
 	const epOption = {
 		type: 'dropdown',
 		id: 'endpointId',
 		label: 'Beltpack',
-		default: epChoices[0]?.id ?? '',
+		default: epChoices[0]?.id,
 		choices: epChoices,
 	}
 
@@ -191,10 +187,13 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 		const res = entity['res'] as string
 		if (res === '/api/1/special/call') return 'Special: Call'
 		const id = Number(res.split('/').pop())
-		if (entity['type'] === 3) return (instance.rolesets.get(id)?.['name'] as string | undefined) ?? res
-		if (entity['type'] === 0) return (instance.connections.get(id)?.['label'] as string | undefined) ?? res
-		if (entity['type'] === 1) return (instance.ports.get(id)?.['port_label'] as string | undefined) ?? res
-		return res
+		if (entity['type'] === 3)
+			return (instance.rolesets.get(id)?.['name'] as string | undefined) ?? `(unknown role ${id})`
+		if (entity['type'] === 0)
+			return (instance.connections.get(id)?.['label'] as string | undefined) ?? `(unknown conn ${id})`
+		if (entity['type'] === 1)
+			return (instance.ports.get(id)?.['port_label'] as string | undefined) ?? `(unknown port ${id})`
+		return `(unknown entity type ${entity['type'] as string})`
 	}
 
 	const feedbacks: Record<string, FeedbackDef> = {
@@ -258,7 +257,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 					type: 'dropdown',
 					id: 'endpointId',
 					label: 'Antenna',
-					default: [...instance.gateways.keys()][0]?.toString() ?? '',
+					default: [...instance.gateways.keys()][0]?.toString(),
 					choices: [...instance.gateways.values()].map((g) => ({ id: String(g['id']), label: String(g['label']) })),
 				},
 			],
@@ -266,7 +265,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'endpoints')
 				const gw = instance.gateways.get(Number(feedback.options['endpointId']))
-				const status = (gw?.['liveStatus'] as DeviceRecord | undefined)?.['status'] ?? gw?.['status']
+				const status = (gw?.['liveStatus'] as DeviceRecord | undefined)?.['status']
 				return status === 'online'
 			},
 		},
@@ -279,7 +278,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 					type: 'dropdown',
 					id: 'endpointId',
 					label: 'Antenna',
-					default: [...instance.gateways.keys()][0]?.toString() ?? '',
+					default: [...instance.gateways.keys()][0]?.toString(),
 					choices: [...instance.gateways.values()].map((g) => ({ id: String(g['id']), label: String(g['label']) })),
 				},
 			],
@@ -287,7 +286,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'endpoints')
 				const gw = instance.gateways.get(Number(feedback.options['endpointId']))
-				return ((gw?.['liveStatus'] as DeviceRecord | undefined)?.['status'] ?? gw?.['status']) as JsonValue
+				return (gw?.['liveStatus'] as DeviceRecord | undefined)?.['status'] as JsonValue
 			},
 		},
 
@@ -345,7 +344,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 					type: 'dropdown',
 					id: 'connectionId',
 					label: 'Connection',
-					default: String([...instance.connections.keys()][0] ?? ''),
+					default: [...instance.connections.keys()][0]?.toString(),
 					choices: [...instance.connections.values()].map((c) => ({
 						id: String(c['id']),
 						label: c['label'] as string,
@@ -374,11 +373,10 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 								type: 'dropdown',
 								id: 'portId',
 								label: 'Port',
-								default:
-									portChoices(instance).find((p) => {
-										const port = [...instance.ports.values()].find((pr) => String(pr['port_id']) === p.id)
-										return port?.['port_config_type'] === '2W'
-									})?.id ?? '',
+								default: portChoices(instance).find((p) => {
+									const port = [...instance.ports.values()].find((pr) => String(pr['port_id']) === p.id)
+									return port?.['port_config_type'] === '2W'
+								})?.id,
 								choices: portChoices(instance).filter((p) => {
 									const port = instance.ports.get(Number(p.id))
 									return port?.['port_config_type'] === '2W'

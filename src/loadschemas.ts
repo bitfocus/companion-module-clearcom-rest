@@ -104,25 +104,3 @@ function collectRefs(obj: unknown, found: Set<string> = new Set()): Set<string> 
 	}
 	return found
 }
-
-export function supportsEndpoint(schema: OpenAPIV3.Document, path: string, method: string = 'post'): boolean {
-	const pathItem = schema.paths?.[path]
-	if (!pathItem) return false
-	return method.toLowerCase() in pathItem
-}
-
-export function getSchemaVersion(schema: OpenAPIV3.Document): string {
-	return schema.info?.version || 'unknown'
-}
-
-export function getEndpointInfo(
-	schema: OpenAPIV3.Document,
-	path: string,
-	method: string = 'post',
-): { summary?: string; description?: string } | null {
-	const pathItem = schema.paths?.[path]
-	if (!pathItem) return null
-	const operation = pathItem[method.toLowerCase() as keyof typeof pathItem] as OpenAPIV3.OperationObject | undefined
-	if (!operation) return null
-	return { summary: operation.summary, description: operation.description }
-}

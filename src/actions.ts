@@ -1,6 +1,8 @@
 import { CompanionActionDefinitions, CompanionActionEvent, SomeCompanionActionInputField } from '@companion-module/base'
 import ModuleInstance from './main.js'
 import * as arcadia from './arcadia.js'
+import { makeLogger } from './logger.js'
+import { DeviceRequestError } from './network.js'
 import { ControlDef, SettingValueType } from './types.js'
 
 // ─── Value option builder ─────────────────────────────────────────────────────
@@ -9,8 +11,8 @@ type Choice = { id: string; label: string }
 
 function valueChoices(vt: SettingValueType): Choice[] {
 	if (vt.kind === 'integer') {
-		const min = Math.max(vt.min, -100) || 0
-		const max = Math.min(vt.max, 100) || 0
+		const min = Math.max(vt.min, -100)
+		const max = Math.min(vt.max, 100)
 		if (vt.step === 0) return []
 		const count = Math.floor((max - min) / vt.step) + 1
 		if (count > 100) return []
@@ -18,9 +20,11 @@ function valueChoices(vt: SettingValueType): Choice[] {
 		for (let v = max; v >= min; v -= vt.step) choices.push({ id: String(v), label: String(v) })
 		return choices
 	}
-	if (vt.kind === 'number-enum')
-		return [...vt.values].sort((a, b) => b - a).map((v) => ({ id: String(v), label: String(v) }))
-	if (vt.kind === 'string-enum') return vt.values.map((v) => ({ id: v, label: v }))
+	if (vt.kind === 'number-enum') {
+		const sorted = [...vt.values].map((v, i) => ({ v, label: vt.labels?.[i] ?? String(v) })).sort((a, b) => b.v - a.v)
+		return sorted.map(({ v, label }) => ({ id: String(v), label }))
+	}
+	if (vt.kind === 'string-enum') return vt.values.map((v) => ({ id: v, label: formatEnumLabel(v) }))
 	if (vt.kind === 'boolean')
 		return [
 			{ id: 'true', label: 'Enabled' },
@@ -37,7 +41,7 @@ function valueOption(def: ControlDef, choices: Choice[]): SomeCompanionActionInp
 		type: 'dropdown',
 		id: 'value',
 		label: 'Value',
-		default: choices[0]?.id ?? '',
+		default: choices[0]?.id,
 		choices,
 		isVisibleExpression: "$(options:mode) == 'absolute'",
 	}
@@ -67,29 +71,46 @@ function modeOptions(def: ControlDef): SomeCompanionActionInputField[] {
 	]
 }
 
-// ─── Format schema enum label ─────────────────────────────────────────────────
+// ─── Enum label formatting ─────────────────────────────────────────────────────
+
+const HEADSET_MIC_TYPE_LABELS: Record<string, string> = {
+	dynamic_0: 'Dynamic (0dB)',
+	dynamic_3: 'Dynamic (-3dB)',
+	dynamic_6: 'Dynamic (-6dB)',
+	dynamic_10: 'Dynamic (-10dB)',
+	dynamic_12: 'Dynamic (-12dB)',
+	dynamic_15: 'Dynamic (-15dB)',
+	electret: 'Electret (-15dB)',
+	electret_18: 'Electret (-18dB)',
+	electret_21: 'Electret (-21dB)',
+	dynamic_balanced: 'Dynamic Balanced',
+	dynamic_unbalanced: 'Dynamic Unbalanced',
+}
 
 function formatEnumLabel(value: string): string {
-	const tokens = ['forcetalk', 'force', 'dual', 'talk', 'listen', 'latching', 'non-latching', 'disabled', 'permanent']
-	let remaining = value
-	const parts: string[] = []
-	while (remaining.length > 0) {
-		const match = tokens.find((t) => remaining.startsWith(t))
-		if (match) {
-			if (match == 'forcetalk') {
-				parts.push('Force', 'Talk')
-			} else {
-				parts.push(match.charAt(0).toUpperCase() + match.slice(1))
-			}
-			if (parts[parts.length - 1] == 'Talk') parts.push('&')
-			remaining = remaining.slice(match.length)
-		} else {
-			parts.push(remaining.charAt(0).toUpperCase() + remaining.slice(1))
-			break
-		}
+	if (value in HEADSET_MIC_TYPE_LABELS) return HEADSET_MIC_TYPE_LABELS[value]
+	return value
+		.replace(/([a-z])([A-Z])/g, '$1 $2')
+		.replace(/[-_]/g, ' ')
+		.replace(/^\w/, (c) => c.toUpperCase())
+}
+
+// ─── Timeout wrapper ──────────────────────────────────────────────────────────
+
+async function withTimeout(name: string, instance: ModuleInstance, fn: () => Promise<void>): Promise<void> {
+	const log = makeLogger('actions', () => instance.config)
+	const timeoutSentinel = Symbol('timeout')
+	const result = await Promise.race([
+		fn()
+			.then(() => undefined)
+			.catch((err: unknown) => err),
+		new Promise<symbol>((resolve) => setTimeout(() => resolve(timeoutSentinel), 4000)),
+	])
+	if (result === timeoutSentinel) {
+		log.error(`Action "${name}" timed out`)
+	} else if (result instanceof Error && !(result instanceof DeviceRequestError)) {
+		log.error(`Action "${name}" failed: ${result.message}`)
 	}
-	if (parts.length < 3 && ['Talk', 'Listen'].includes(parts[0])) parts[1] = 'Only'
-	return parts.join(' ')
 }
 
 // ─── Schema-driven actions ────────────────────────────────────────────────────
@@ -109,19 +130,55 @@ function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions 
 			if (!def.deviceTypes.some((dt) => selectedTypes.includes(dt))) continue
 		}
 
-		const effectiveVt = def.valueType
+		// For action choices, use the most restrictive value type across all overrides.
+		// This prevents showing invalid values for port types with tighter ranges (e.g. 2W gain).
+		const effectiveVt = (() => {
+			if (!def.perTypeOverride) return def.valueType
+			const overrides = Object.values(def.perTypeOverride)
+			// Pick the override with the fewest valid values (most restrictive)
+			let most: SettingValueType = def.valueType
+			for (const ov of overrides) {
+				const ovCount =
+					ov.kind === 'number-enum'
+						? ov.values.length
+						: ov.kind === 'integer' && ov.step > 0
+							? Math.floor((ov.max - ov.min) / ov.step) + 1
+							: Infinity
+				const curCount =
+					most.kind === 'number-enum'
+						? most.values.length
+						: most.kind === 'integer' && most.step > 0
+							? Math.floor((most.max - most.min) / most.step) + 1
+							: Infinity
+				if (ovCount < curCount) most = ov
+			}
+			return most
+		})()
 		const choices = valueChoices(effectiveVt)
 
 		const isKeyset = def.read?.store === ('keysets' as string)
 		const isPort = def.scope === 'port'
 		const isEndpoint = def.scope === 'endpoint'
 
-		// Build the subject dropdown (who this applies to)
+		// Label/string fields target a single subject — multi-select would create duplicates
+		const isSingleSubject = def.valueType.kind === 'string'
 		const subjectOption: SomeCompanionActionInputField = isPort
-			? { type: 'multidropdown', id: 'ids', label: 'Port', default: [], choices: arcadia.portChoices(instance) }
+			? isSingleSubject
+				? {
+						type: 'dropdown',
+						id: 'ids',
+						label: 'Port',
+						default: arcadia.portChoices(instance)[0]?.id,
+						choices: arcadia.portChoices(instance),
+					}
+				: { type: 'multidropdown', id: 'ids', label: 'Port', default: [], choices: arcadia.portChoices(instance) }
 			: isEndpoint
-				? { type: 'multidropdown', id: 'ids', label: 'Endpoint', default: [], choices: epChoices }
-				: { type: 'multidropdown', id: 'ids', label: 'Role', default: [], choices: rChoices }
+				? isSingleSubject
+					? { type: 'dropdown', id: 'ids', label: 'Endpoint', default: epChoices[0]?.id, choices: epChoices }
+					: { type: 'multidropdown', id: 'ids', label: 'Endpoint', default: [], choices: epChoices }
+				: isSingleSubject
+					? { type: 'dropdown', id: 'ids', label: 'Role', default: rChoices[0]?.id, choices: rChoices }
+					: { type: 'multidropdown', id: 'ids', label: 'Role', default: [], choices: rChoices }
 
 		const typePrefix = def.deviceTypes.length === 1 ? `[${def.deviceTypes[0]}] ` : ''
 		const scopePrefix = isPort ? '[Port] ' : isEndpoint ? '[Endpoint] ' : isKeyset ? '' : '[Role] '
@@ -131,17 +188,21 @@ function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions 
 			description: def.description,
 			options: [subjectOption, ...modeOptions(def), valueOption(def, choices)],
 			callback: async (action: CompanionActionEvent) => {
-				const ids = (action.options['ids'] as string[]).map(Number)
+				const raw = action.options['ids']
+				const ids = (Array.isArray(raw) ? (raw as string[]) : [raw as string]).map(Number)
 				const mode = (action.options['mode'] as 'absolute' | 'increment' | 'decrement' | undefined) ?? 'absolute'
 				const value = parseValue(action.options['value'] as string, effectiveVt)
 
-				if (isKeyset) {
-					await arcadia.setKeyset(instance, ids, def, value, mode)
-				} else {
-					for (const id of ids) {
-						await arcadia.executeWrite(instance, def, id, value, mode)
+				await withTimeout(def.id, instance, async () => {
+					if (isKeyset) {
+						const deviceType = def.deviceTypes[0]
+						await arcadia.setKeyset(instance, ids, def, value, mode, deviceType)
+					} else {
+						for (const id of ids) {
+							await arcadia.executeWrite(instance, def, id, value, mode)
+						}
 					}
-				}
+				})
 			},
 		}
 	}
@@ -202,7 +263,9 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 				const roleIds = action.options['roleIds'] as string[]
 				const active = action.options['active'] === 'true'
 				const text = action.options['text'] as string
-				for (const roleId of roleIds) await arcadia.sendCall(instance, roleId, active, text)
+				await withTimeout('call', instance, async () => {
+					for (const roleId of roleIds) await arcadia.sendCall(instance, roleId, active, text)
+				})
 			},
 		},
 		assign_role: {
@@ -213,7 +276,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 					type: 'dropdown',
 					id: 'endpointId',
 					label: 'Endpoint',
-					default: arcadia.endpointChoices(instance)[0]?.id ?? '',
+					default: arcadia.endpointChoices(instance)[0]?.id,
 					choices: arcadia.endpointChoices(instance),
 				},
 				{
@@ -233,7 +296,9 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			callback: async (action: CompanionActionEvent) => {
 				const endpointId = Number(action.options['endpointId'])
 				const gid = action.options['rolesetGid'] as string
-				await arcadia.changeEndpointAssociation(instance, endpointId, gid || null)
+				await withTimeout('assign_role', instance, async () => {
+					await arcadia.changeEndpointAssociation(instance, endpointId, gid || null)
+				})
 			},
 		},
 
@@ -251,7 +316,9 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			],
 			callback: async (action: CompanionActionEvent) => {
 				const selected = action.options['roleIds'] as string[]
-				for (const id of selected) await arcadia.remoteMicKill(instance, id)
+				await withTimeout('remote_mic_kill', instance, async () => {
+					for (const id of selected) await arcadia.remoteMicKill(instance, id)
+				})
 			},
 		},
 	}
@@ -269,7 +336,9 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			options: [{ type: 'multidropdown', id: 'portIds', label: 'Port', default: [], choices: twoPChoices }],
 			callback: async (action: CompanionActionEvent) => {
 				const portIds = (action.options['portIds'] as string[]).map(Number)
-				await arcadia.startNulling(instance, portIds)
+				await withTimeout('port_2w_start_nulling', instance, async () => {
+					await arcadia.startNulling(instance, portIds)
+				})
 			},
 		}
 	}
@@ -294,7 +363,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 				type: 'dropdown',
 				id: 'activationState',
 				label: 'Key Mode',
-				default: caps.activationStates[0] ?? '',
+				default: caps.activationStates[0],
 				choices: caps.activationStates.map((s) => ({ id: s, label: formatEnumLabel(s) })),
 			})
 		}
@@ -303,7 +372,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			type: 'dropdown',
 			id: 'talkBtnMode',
 			label: 'Talk Button Mode',
-			default: talkModeChoices[0]?.id ?? '',
+			default: talkModeChoices[0]?.id,
 			choices: talkModeChoices,
 		})
 
@@ -316,14 +385,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			learn: (action) => {
 				const roleId = (action.options['roleIds'] as string[])[0]
 				if (!roleId) return undefined
-				const roleset = instance.rolesets.get(Number(roleId))
-				if (!roleset) return undefined
-				const sessions = roleset['sessions'] as Record<string, unknown> | undefined
-				const firstSession = sessions ? (Object.values(sessions)[0] as Record<string, unknown> | undefined) : undefined
-				const settingsObj = (firstSession?.['data'] as Record<string, unknown> | undefined)?.['settings'] as
-					| Record<string, unknown>
-					| undefined
-				const keysetId = settingsObj?.['defaultRole'] as number | undefined
+				const keysetId = arcadia.findKeysetIdForRole(instance, Number(roleId), deviceType)
 				if (keysetId === undefined) return undefined
 				const keyset = instance.keysets.get(keysetId)
 				if (!keyset) return undefined
@@ -340,23 +402,29 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 					else if (entity['type'] === 0) assignTo = `conn:${res.split('/').pop()}`
 					else if (entity['type'] === 1) assignTo = `port:${res.split('/').pop()}`
 				}
+				const activationState = slot['activationState'] as string | undefined
+				const talkBtnMode = slot['talkBtnMode'] as string | undefined
+				if (talkBtnMode === undefined) return undefined
 				return {
 					...action.options,
 					assignTo,
-					activationState: (slot['activationState'] as string) ?? '',
-					talkBtnMode: (slot['talkBtnMode'] as string) ?? '',
+					activationState,
+					talkBtnMode,
 				}
 			},
 			callback: async (action: CompanionActionEvent) => {
 				const roleIds = (action.options['roleIds'] as string[]).map(Number)
-				await arcadia.assignKeyChannel(
-					instance,
-					roleIds,
-					Number(action.options['keyIndex']),
-					action.options['assignTo'] as string,
-					(action.options['activationState'] as string) ?? '',
-					action.options['talkBtnMode'] as string,
-				)
+				await withTimeout(`assign_key_${deviceType}`, instance, async () => {
+					await arcadia.assignKeyChannel(
+						instance,
+						roleIds,
+						Number(action.options['keyIndex']),
+						action.options['assignTo'] as string,
+						action.options['activationState'] as string,
+						action.options['talkBtnMode'] as string,
+						deviceType,
+					)
+				})
 			},
 		}
 	}

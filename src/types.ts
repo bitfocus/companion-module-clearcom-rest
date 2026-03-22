@@ -1,5 +1,5 @@
 // ─── Feedback store type ─────────────────────────────────────────────────────
-// All valid store names for feedbackTriggers, including 'nulling' which is
+// All valid store names used for feedbackTriggers, including 'nulling' which is
 // a special non-store trigger used only by the nulling poll loop.
 export type FeedbackStore = ReadDef['store'] | 'nulling'
 
@@ -11,7 +11,7 @@ export type FeedbackStore = ReadDef['store'] | 'nulling'
 
 export type SettingValueType =
 	| { kind: 'integer'; min: number; max: number; step: number }
-	| { kind: 'number-enum'; values: number[] }
+	| { kind: 'number-enum'; values: number[]; labels?: string[] }
 	| { kind: 'string-enum'; values: string[] }
 	| { kind: 'boolean' }
 	| { kind: 'string' }

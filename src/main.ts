@@ -7,7 +7,7 @@ import {
 	CompanionOptionValues,
 } from '@companion-module/base'
 import { GetConfigFields, type ModuleConfig, type ModuleSecrets } from './config.js'
-import { UpdateVariableDefinitions, UpdateVariableValues } from './variables.js'
+import { UpdateVariableValues } from './variables.js'
 import { UpgradeScripts } from './upgrades.js'
 import { UpdateActions } from './actions.js'
 import { UpdateFeedbacks } from './feedbacks.js'
@@ -58,7 +58,6 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 	async init(config: ModuleConfig, isFirstInit: boolean, secrets: ModuleSecrets): Promise<void> {
 		void isFirstInit
 		this.secrets = secrets
-		this.updateVariableDefinitions()
 		await this.configUpdated(config, secrets)
 	}
 
@@ -85,35 +84,36 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 	private _choicesFingerprint = ''
 
 	choicesFingerprint(): string {
-		const endpoints = [...this.endpoints.values()].map((e) => `${e['id']}:${e['label']}`).join(',')
+		const endpoints = [...this.endpoints.values()]
+			.map((e) => {
+				const dpId = (
+					this.endpointStatus.get(e['id'] as number)?.['association'] as Record<string, unknown> | undefined
+				)?.['dpId'] as number | undefined
+				return `${e['id'] as number}:${e['label'] as string}:${dpId ?? 0}`
+			})
+			.join(',')
 		const rolesets = [...this.rolesets.values()].map((r) => `${r['id']}:${r['label'] ?? r['name']}`).join(',')
 		const ports = [...this.ports.values()].map((p) => `${p['port_id']}:${p['port_label']}`).join(',')
-		return `${endpoints}|${rolesets}|${ports}`
-	}
-
-	updateActions(): void {
-		UpdateActions(this)
-	}
-
-	updateFeedbacks(): void {
-		UpdateFeedbacks(this)
+		const connections = [...this.connections.values()].map((c) => `${c['id']}:${c['label']}`).join(',')
+		const keysets = [...this.keysets.keys()].join(',')
+		return `${endpoints}|${rolesets}|${ports}|${connections}|${keysets}`
 	}
 
 	rebuildIfChanged(): void {
 		const fp = this.choicesFingerprint()
 		if (fp === this._choicesFingerprint) return
 		this._choicesFingerprint = fp
-		this.updateActions()
-		this.updateFeedbacks()
+		UpdateActions(this)
+		UpdateFeedbacks(this)
 	}
 
-	updateVariableDefinitions(): void {
-		UpdateVariableDefinitions(this)
+	forceRebuild(): void {
+		this._choicesFingerprint = ''
+		this.rebuildIfChanged()
 	}
 
 	updateVariables(): void {
 		if (!this.deviceInfo) return
-		UpdateVariableDefinitions(this)
 		UpdateVariableValues(this)
 	}
 
