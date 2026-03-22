@@ -7,7 +7,7 @@ import {
 	CompanionOptionValues,
 } from '@companion-module/base'
 import { GetConfigFields, type ModuleConfig, type ModuleSecrets } from './config.js'
-import { UpdateVariableValues } from './variables.js'
+import { UpdateVariableDefinitions, UpdateVariableValues } from './variables.js'
 import { UpgradeScripts } from './upgrades.js'
 import { UpdateActions } from './actions.js'
 import { UpdateFeedbacks } from './feedbacks.js'
@@ -114,6 +114,7 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 
 	updateVariables(): void {
 		if (!this.deviceInfo) return
+		UpdateVariableDefinitions(this)
 		UpdateVariableValues(this)
 	}
 
