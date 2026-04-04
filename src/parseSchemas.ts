@@ -264,8 +264,9 @@ function buildEndpointControlDefs(refSchemas: Record<string, Record<string, unkn
 			continue
 		}
 
-		const valueType = parseProperty(prop)
-		if (!valueType) continue
+		// For read-only liveStatus fields, fall back to string display if no
+		// constraints are defined — unconstrained integers are still displayable.
+		const valueType = parseProperty(prop) ?? { kind: 'string' as const }
 
 		// status field becomes a boolean 'online' check
 		const finalValueType: SettingValueType = key === 'status' ? { kind: 'boolean' } : valueType

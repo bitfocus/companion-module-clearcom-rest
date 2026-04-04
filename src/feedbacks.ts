@@ -77,7 +77,13 @@ function buildDefsFor(
 		}
 		if (isKeyset) {
 			const deviceType = def.deviceTypes[0]
-			const keyset = getKeysetForRole(instance, subjectId, deviceType)
+			// If no specific device type, scan all to find the keyset for this role
+			const keyset = deviceType
+				? getKeysetForRole(instance, subjectId, deviceType)
+				: Object.keys(instance.keyAssignCapabilities).reduce<DeviceRecord | null>(
+						(found, dt) => found ?? getKeysetForRole(instance, subjectId, dt),
+						null,
+					)
 			return keyset ? getField(keyset, def.read!.field) : null
 		}
 		if (isEndpoint) {
@@ -176,7 +182,16 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 	}
 
 	const getKeyAssign = (roleId: number, keyIndex: number): string => {
-		const keyset = getKeysetForRole(instance, roleId)
+		// Navigate rolesets → sessions → defaultRole → keyset.
+		// Try all known device types until we find a keyset for this role.
+		let keyset: DeviceRecord | null = null
+		for (const deviceType of Object.keys(instance.keyAssignCapabilities)) {
+			const ks = getKeysetForRole(instance, roleId, deviceType)
+			if (ks) {
+				keyset = ks
+				break
+			}
+		}
 		if (!keyset) return ''
 		const slots = ((keyset['settings'] as DeviceRecord | undefined)?.['keysets'] ?? []) as DeviceRecord[]
 		const slot = slots.find((s) => (s['keysetIndex'] as number) === keyIndex)

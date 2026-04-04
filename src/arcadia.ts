@@ -274,7 +274,9 @@ function resolveKeyEntity(instance: ModuleInstance, assignTo: string): KeyEntity
 	if (kind === 'conn') {
 		const conn = instance.connections.get(id)
 		if (!conn) return []
-		return [{ res: conn['res'] as string, type: 0 }]
+		const entity: KeyEntity = { res: `/api/1/connections/${id}`, type: 0 }
+		if (conn['gid']) entity.gid = conn['gid'] as string
+		return [entity]
 	}
 	if (kind === 'role') {
 		return instance.rolesets.has(id) ? [{ res: `/api/2/rolesets/${id}`, type: 3 }] : []
@@ -304,9 +306,9 @@ export async function assignKeyChannel(
 			if ((slot['keysetIndex'] as number) !== keyIndex) return slot
 			return {
 				...slot,
-				entities: resolveKeyEntity(instance, assignTo),
+				entities: assignTo === '' ? slot['entities'] : resolveKeyEntity(instance, assignTo),
 				activationState,
-				isCallKey: assignTo === 'special:call',
+				isCallKey: assignTo === '' ? slot['isCallKey'] : assignTo === 'special:call',
 				talkBtnMode,
 			}
 		})

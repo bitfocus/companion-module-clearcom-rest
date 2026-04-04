@@ -4,7 +4,7 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
-### 0.3.0
+### 0.3.1
 
 - V-Panel Actions & Feedbacks
 - Mic Type/Gain fixups for Helixnet packs
