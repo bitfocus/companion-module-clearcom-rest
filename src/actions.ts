@@ -95,6 +95,30 @@ function formatEnumLabel(value: string): string {
 		.replace(/^\w/, (c) => c.toUpperCase())
 }
 
+// Converts activation state enum values to human-readable labels.
+// Tokens: dual, force, talk, listen — where 'force' always modifies the next token.
+// e.g. "talkforcelisten" → "Talk & Force Listen"
+// e.g. "forcetalkforcelisten" → "Force Talk & Force Listen"
+function activationStateLabel(value: string): string {
+	const tokens = value.match(/dual|force|talk|listen/gi) ?? [value]
+	// Group each token with any preceding 'force'/'dual' modifier
+	const parts: string[] = []
+	for (let i = 0; i < tokens.length; i++) {
+		const t = tokens[i].toLowerCase()
+		if ((t === 'force' || t === 'dual') && i + 1 < tokens.length) {
+			const next = tokens[++i]
+			parts.push(
+				t.charAt(0).toUpperCase() + t.slice(1) + ' ' + next.charAt(0).toUpperCase() + next.slice(1).toLowerCase(),
+			)
+		} else {
+			parts.push(t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
+		}
+	}
+	// Insert ' & ' before the 'listen' group (last part if more than one)
+	if (parts.length > 1) parts.splice(parts.length - 1, 0, '&')
+	return parts.join(' ')
+}
+
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
 
 async function withTimeout(name: string, instance: ModuleInstance, fn: () => Promise<void>): Promise<void> {
@@ -181,7 +205,13 @@ function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions 
 					: { type: 'multidropdown', id: 'ids', label: 'Role', default: [], choices: rChoices }
 
 		const typePrefix = def.deviceTypes.length === 1 ? `[${def.deviceTypes[0]}] ` : ''
-		const scopePrefix = isPort ? '[Port] ' : isEndpoint ? '[Endpoint] ' : isKeyset ? '' : '[Role] '
+		const scopePrefix = isPort
+			? '[Port] '
+			: isEndpoint
+				? '[Endpoint] '
+				: isKeyset && def.deviceTypes.length === 1
+					? ''
+					: '[Role] '
 
 		actions[def.id.replace(/\./g, '_')] = {
 			name: `${typePrefix}${scopePrefix}${def.label}`,
@@ -237,7 +267,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 
 	const actions: CompanionActionDefinitions = {
 		call: {
-			name: 'Call Beltpack',
+			name: '[Role] Call',
 			description: 'Send a call notification to a beltpack role.',
 			options: [
 				{
@@ -269,7 +299,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			},
 		},
 		assign_role: {
-			name: 'Assign Role to Endpoint',
+			name: '[Endpoint] Assign Role',
 			description: 'Change association for the endpoint attached to the device.',
 			options: [
 				{
@@ -303,7 +333,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		},
 
 		remote_mic_kill: {
-			name: 'Remote Mic Kill (RMK)',
+			name: '[Role] Remote Mic Kill (RMK)',
 			description: 'Remotely mute the microphone on a beltpack.',
 			options: [
 				{
@@ -364,7 +394,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 				id: 'activationState',
 				label: 'Key Mode',
 				default: caps.activationStates[0],
-				choices: caps.activationStates.map((s) => ({ id: s, label: formatEnumLabel(s) })),
+				choices: caps.activationStates.map((s) => ({ id: s, label: activationStateLabel(s) })),
 			})
 		}
 

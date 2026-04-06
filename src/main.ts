@@ -132,6 +132,7 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 			})
 			if (!loginResponse) {
 				this.updateStatus(InstanceStatus.ConnectionFailure, 'Login failed')
+				await this._loadSchemasOffline(apiBaseUrl)
 				return
 			}
 			this.bearerToken = loginResponse.jwt
@@ -148,8 +149,22 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 			connect(this)
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
-			this._log.error(msg)
-			this.updateStatus(InstanceStatus.UnknownError, msg)
+			this._log.warn(`Connection failed: ${msg}`)
+			this.updateStatus(InstanceStatus.Disconnected, msg)
+			await this._loadSchemasOffline(apiBaseUrl)
+		}
+	}
+
+	private async _loadSchemasOffline(apiBaseUrl: string): Promise<void> {
+		if (!this.config.schemaCache || Object.keys(this.config.schemaCache).length === 0) return
+		try {
+			const loaded = await loadSchemasAndRefs(this, apiBaseUrl)
+			this.controlDefs = filterControlDefs(buildControlDefs(loaded))
+			this.keyAssignCapabilities = parseKeyAssignCapabilities(loaded)
+			this._log.info(`Offline: loaded ${this.controlDefs.length} control defs from cache`)
+			this.forceRebuild()
+		} catch (err) {
+			this._log.warn(`Could not load offline schemas: ${err}`)
 		}
 	}
 }

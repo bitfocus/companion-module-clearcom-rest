@@ -22,7 +22,7 @@ export async function loadSchemasAndRefs(self: ModuleInstance, deviceHost: strin
 	// Device type is only known after fetchDevice — use 'unknown' as a fallback key
 	// until deviceInfo is populated. In practice, connect() fetches device info first.
 	const deviceType = (self.deviceInfo?.deviceType_name ?? 'unknown').toUpperCase()
-	const cached = self.config.schemaCache?.[deviceType]
+	const cached = self.config.schemaCache?.[deviceType] ?? Object.values(self.config.schemaCache ?? {}).find(Boolean)
 
 	const apiUrl = `${deviceHost}/api/1/schemas/clearcom_api.json`
 	let mainSchema: OpenAPIV3.Document | null = null

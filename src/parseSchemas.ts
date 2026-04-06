@@ -174,7 +174,7 @@ function buildPortControlDefs(refSchemas: Record<string, Record<string, unknown>
 	if (labelInPut) {
 		defs.push({
 			id: 'port.label',
-			label: 'Port Label',
+			label: 'Label',
 			scope: 'port',
 			deviceTypes: [],
 			read: {
@@ -212,7 +212,7 @@ function buildEndpointControlDefs(refSchemas: Record<string, Record<string, unkn
 
 	defs.push({
 		id: 'endpoint.label',
-		label: 'Endpoint Label',
+		label: 'Label',
 		scope: 'endpoint',
 		deviceTypes: [],
 		read: {
@@ -326,7 +326,7 @@ function buildRoleControlDefs(refSchemas: Record<string, Record<string, unknown>
 	// Role label — 'label' is the display name, 'name' is the unique system identifier
 	defs.push({
 		id: 'role.label',
-		label: 'Role Label',
+		label: 'Label',
 		scope: 'role',
 		deviceTypes: [],
 		read: {

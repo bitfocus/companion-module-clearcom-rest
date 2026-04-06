@@ -63,7 +63,13 @@ function buildDefsFor(
 			: { type: 'dropdown', id: 'subjectId', label: 'Role', default: rChoices[0]?.id, choices: rChoices }
 
 	const typePrefix = def.deviceTypes.length === 1 ? `[${def.deviceTypes[0]}] ` : ''
-	const scopePrefix = isPort ? '[Port] ' : isEndpoint || isLiveStatus ? '[Beltpack] ' : '[Role] '
+	const scopePrefix = isPort
+		? '[Port] '
+		: isEndpoint || isLiveStatus
+			? '[Beltpack] '
+			: isKeyset && def.deviceTypes.length === 1
+				? ''
+				: '[Role] '
 	const name = `${typePrefix}${scopePrefix}${def.label}`
 
 	const getValue = (subjectId: number): unknown => {
