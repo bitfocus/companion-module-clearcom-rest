@@ -14,7 +14,7 @@ import { UpdateFeedbacks } from './feedbacks.js'
 import { postRequest, fetchDevice } from './network.js'
 import { makeLogger } from './logger.js'
 import { connect, disconnect, filterControlDefs } from './commands.js'
-import { loadSchemasAndRefs } from './loadSchemas.js'
+import { loadSchemasAndRefs, clearSchemaCache } from './loadSchemas.js'
 import { buildControlDefs, parseKeyAssignCapabilities } from './parseSchemas.js'
 import { DeviceRecord, DeviceInfo, ControlDef, KeyAssignCapabilities, FeedbackStore } from './types.js'
 
@@ -68,6 +68,18 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 
 	async configUpdated(config: ModuleConfig, secrets: ModuleSecrets): Promise<void> {
 		const hostChanged = config.host !== this.config?.host
+
+		// If the refresh flag is set, clear the cache and reset the flag in one
+		// atomic saveConfig call — before the restart that saveConfig triggers.
+		if (config.refreshSchema) {
+			config = clearSchemaCache(config)
+			this.config = config
+			this.secrets = secrets
+			this.saveConfig(config, undefined)
+			// saveConfig will trigger a restart; nothing further needed here
+			return
+		}
+
 		this.config = config
 		this.secrets = secrets
 		if (hostChanged || !this.bearerToken) {
@@ -114,7 +126,9 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 
 	updateVariables(): void {
 		if (!this.deviceInfo) return
+		console.log('\nCalling updateVariableDefinitions\n')
 		UpdateVariableDefinitions(this)
+		console.log('\nCalling updateVariableValues\n')
 		UpdateVariableValues(this)
 	}
 

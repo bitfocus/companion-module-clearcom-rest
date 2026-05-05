@@ -193,7 +193,7 @@ export async function fetchDevice(instance: ModuleInstance): Promise<void> {
 		instance.deviceInfo = response
 		instance.updateVariables()
 		log.info(
-			`Device: ${response.deviceType_name} "${response.device_label}" fw=${response.device_versionSW ?? response.versionSW}`,
+			`Device: ${response.deviceType_name} "${response.device_label}" fw=${response.versionSW ?? response.device_versionSW}`,
 		)
 	} catch (error) {
 		log.error(`fetchDevice failed: ${String(error)}`)

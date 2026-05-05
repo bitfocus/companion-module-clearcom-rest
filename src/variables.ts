@@ -25,6 +25,7 @@ export function UpdateVariableDefinitions(instance: ModuleInstance): void {
 
 export function UpdateVariableValues(instance: ModuleInstance): void {
 	const info = instance.deviceInfo
+
 	if (!info) return
 	const fans = info.device_liveStatus?.fanStatus ?? []
 	const temps = info.device_liveStatus?.temperatureSensors ?? []

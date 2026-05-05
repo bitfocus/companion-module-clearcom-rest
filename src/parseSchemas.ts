@@ -1,4 +1,4 @@
-import { ControlDef, SettingValueType, KeyAssignCapabilities } from './types.js'
+import { ControlDef, SettingValueType, KeyAssignCapabilities, KeySlotField } from './types.js'
 import { LoadedSchemas } from './loadSchemas.js'
 import { SKIP_PORT_SETTINGS, SKIP_KEYSET_SETTINGS, SKIP_LIVE_STATUS } from './commands.js'
 
@@ -429,6 +429,9 @@ export type { ControlDef }
 // activation states, and talk button modes. Used by actions.ts to build
 // the assign key action options.
 
+// Fields that are structural/internal and should not become user-facing slot controls
+const SKIP_KEY_SLOT_FIELDS = new Set(['keysetIndex', 'entities', 'isCallKey', 'isReplyKey', 'isPgm', 'colorIndex'])
+
 export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record<string, KeyAssignCapabilities> {
 	const putSchema = loadedSchemas.refSchemas['request_schemas/keysets_put_update_2.schema.json'] as unknown as Record<
 		string,
@@ -439,12 +442,13 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 	const definitions = putSchema['definitions'] as Record<string, Record<string, unknown>> | undefined
 	if (!definitions) return {}
 
-	const getKeysetsItemProps = (defName: string): Record<string, unknown> => {
+	const getKeysetsItemProps = (defName: string): Record<string, Record<string, unknown>> => {
 		const source = V_SERIES_VARIANTS.has(defName) ? V_SERIES_BASE : defName
 		const def = definitions[source]
 		if (!def) return {}
 		const keysets = (def['properties'] as Record<string, Record<string, unknown>> | undefined)?.['keysets']
-		return (keysets?.['items'] as Record<string, Record<string, unknown>> | undefined)?.['properties'] ?? {}
+		return ((keysets?.['items'] as Record<string, Record<string, unknown>> | undefined)?.['properties'] ??
+			{}) as Record<string, Record<string, unknown>>
 	}
 
 	const result: Record<string, KeyAssignCapabilities> = {}
@@ -453,8 +457,6 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 		const def = definitions[defName]
 		if (!def) continue
 
-		// V-Series variants inherit keyCount from the base definition, but the base
-		// reports maxItems=32 for all variants. Use the per-variant override if available.
 		const keysetsDef = V_SERIES_VARIANTS.has(defName) ? definitions[V_SERIES_BASE] : def
 		const keysets = (keysetsDef?.['properties'] as Record<string, Record<string, unknown>> | undefined)?.['keysets']
 		const schemaKeyCount = keysets?.['maxItems'] as number | undefined
@@ -463,15 +465,35 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 			console.warn(`parseKeyAssignCapabilities: no keyCount for ${deviceType} — skipping`)
 			continue
 		}
-		const itemProps = getKeysetsItemProps(defName)
-		const activationStates =
-			((itemProps['activationState'] as Record<string, unknown> | undefined)?.['enum'] as string[] | null) ?? null
-		const talkBtnModes = (itemProps['talkBtnMode'] as Record<string, unknown> | undefined)?.['enum'] as
-			| string[]
-			| undefined
-		if (!talkBtnModes) continue
 
-		result[deviceType] = { keyCount, activationStates, talkBtnModes }
+		const itemProps = getKeysetsItemProps(defName)
+
+		// Dynamically build slotFields from all non-structural item properties
+		const slotFields: KeySlotField[] = []
+		for (const [key, prop] of Object.entries(itemProps)) {
+			if (SKIP_KEY_SLOT_FIELDS.has(key)) continue
+			const valueType = parseProperty(prop)
+			if (!valueType) continue
+			const firstValue =
+				valueType.kind === 'string-enum'
+					? valueType.values[0]
+					: valueType.kind === 'number-enum'
+						? valueType.values[0]
+						: valueType.kind === 'boolean'
+							? false
+							: valueType.kind === 'integer'
+								? valueType.min
+								: ''
+			slotFields.push({
+				key,
+				label: toLabel(key),
+				valueType,
+				default: firstValue,
+			})
+		}
+
+		if (slotFields.length === 0) continue
+		result[deviceType] = { keyCount, slotFields }
 	}
 
 	return result

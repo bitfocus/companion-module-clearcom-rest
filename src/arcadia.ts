@@ -296,8 +296,7 @@ export async function assignKeyChannel(
 	roleIds: number[],
 	keyIndex: number,
 	assignTo: string,
-	activationState: string,
-	talkBtnMode: string,
+	slotValues: Record<string, unknown>,
 	deviceType: string,
 ): Promise<void> {
 	await putKeysets(instance, roleIds, deviceType, `assignKeyChannel key=${keyIndex}`, (keyset) => {
@@ -307,9 +306,8 @@ export async function assignKeyChannel(
 			return {
 				...slot,
 				entities: assignTo === '' ? slot['entities'] : resolveKeyEntity(instance, assignTo),
-				activationState,
 				isCallKey: assignTo === '' ? slot['isCallKey'] : assignTo === 'special:call',
-				talkBtnMode,
+				...slotValues,
 			}
 		})
 		return { type: keyset['type'], settings: { keysets: updatedSlots } }

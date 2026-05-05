@@ -4,7 +4,7 @@
 	"name": "clearcom rest",
 	"shortname": "CC Rest",
 	"description": "A Module to control Clear-Com equipment that use a REST API",
-	"version": "0.3.2",
+	"version": "0.3.4",
 	"type": "connection",
 	"license": "MIT",
 	"repository": "git+https://github.com/MeestorX/companion-module-clearcom-rest.git",
@@ -19,7 +19,10 @@
 		"type": "node22",
 		"api": "nodejs-ipc",
 		"apiVersion": "0.0.0",
-		"entrypoint": "../dist/main.js"
+		"entrypoint": "../dist/main.js",
+		"permissions": {
+			"filesystem": true
+		}
 	},
 	"legacyIds": [],
 	"manufacturer": "Clear-Com",

@@ -98,8 +98,14 @@ export type EndpointUpdatedEvent = {
 
 export type SchemaValueType = SettingValueType // same shape, different origin
 
+export type KeySlotField = {
+	key: string // e.g. 'interlockGroup', 'activationState'
+	label: string // e.g. 'Interlock Group', 'Key Mode'
+	valueType: SettingValueType
+	default: unknown // first valid value, used as action default
+}
+
 export type KeyAssignCapabilities = {
 	keyCount: number
-	activationStates: string[] | null
-	talkBtnModes: string[]
+	slotFields: KeySlotField[] // all writable per-slot fields discovered from schema
 }

@@ -79,7 +79,11 @@ function buildDefsFor(
 		}
 		if (isLiveStatus) {
 			const status = instance.endpointStatus.get(subjectId)
-			return status ? getField(status, def.read!.field) : null
+			const val = status ? getField(status, def.read!.field) : null
+			if (def.read!.field.startsWith('longevity.') && typeof val === 'number') {
+				return String(val).padStart(2, '0')
+			}
+			return val
 		}
 		if (isKeyset) {
 			const deviceType = def.deviceTypes[0]
@@ -251,6 +255,24 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'keysets')
 				return getKeyAssign(Number(feedback.options['roleId']), Number(feedback.options['keyIndex']))
+			},
+		},
+
+		// ── Role assigned endpoint ────────────────────────────────────────────
+		role_endpoint: {
+			type: 'value',
+			name: '[Role] Assigned Endpoint ID',
+			description: 'Returns the endpoint ID currently assigned to this role (via association.dpId)',
+			options: [roleOption],
+			unsubscribe: unsubscribeFn(instance),
+			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
+				subscribe(instance, feedback.feedbackId, 'endpointStatus')
+				const roleId = Number(feedback.options['roleId'])
+				for (const [epId, status] of instance.endpointStatus) {
+					const dpId = (status['association'] as DeviceRecord | undefined)?.['dpId'] as number | undefined
+					if (dpId === roleId) return epId as JsonValue
+				}
+				return null
 			},
 		},
 

@@ -1,4 +1,9 @@
-import { CompanionActionDefinitions, CompanionActionEvent, SomeCompanionActionInputField } from '@companion-module/base'
+import {
+	CompanionActionDefinitions,
+	CompanionActionEvent,
+	CompanionOptionValues,
+	SomeCompanionActionInputField,
+} from '@companion-module/base'
 import ModuleInstance from './main.js'
 import * as arcadia from './arcadia.js'
 import { makeLogger } from './logger.js'
@@ -101,7 +106,6 @@ function formatEnumLabel(value: string): string {
 // e.g. "forcetalkforcelisten" → "Force Talk & Force Listen"
 function activationStateLabel(value: string): string {
 	const tokens = value.match(/dual|force|talk|listen/gi) ?? [value]
-	// Group each token with any preceding 'force'/'dual' modifier
 	const parts: string[] = []
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i].toLowerCase()
@@ -114,9 +118,13 @@ function activationStateLabel(value: string): string {
 			parts.push(t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
 		}
 	}
-	// Insert ' & ' before the 'listen' group (last part if more than one)
 	if (parts.length > 1) parts.splice(parts.length - 1, 0, '&')
 	return parts.join(' ')
+}
+
+function slotFieldEnumLabel(key: string, value: string): string {
+	if (key === 'activationState') return activationStateLabel(value)
+	return formatEnumLabel(value)
 }
 
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
@@ -380,7 +388,6 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 
 	for (const [deviceType, caps] of filteredCaps) {
 		const keyChoices = Array.from({ length: caps.keyCount }, (_, i) => ({ id: String(i), label: `Key ${i + 1}` }))
-		const talkModeChoices = caps.talkBtnModes.map((m) => ({ id: m, label: formatEnumLabel(m) }))
 
 		const opts: SomeCompanionActionInputField[] = [
 			{ type: 'multidropdown', id: 'roleIds', label: 'Role', default: [], choices: rChoices },
@@ -388,25 +395,31 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			{ type: 'dropdown', id: 'assignTo', label: 'Assign To', default: '', choices: assignToChoices },
 		]
 
-		if (caps.activationStates) {
-			opts.push({
-				type: 'dropdown',
-				id: 'activationState',
-				label: 'Key Mode',
-				default: caps.activationStates[0],
-				choices: caps.activationStates.map((s) => ({ id: s, label: activationStateLabel(s) })),
-			})
+		// Dynamically add one option per slot field discovered from schema
+		for (const field of caps.slotFields) {
+			const choices =
+				field.valueType.kind === 'string-enum'
+					? field.valueType.values.map((v) => ({ id: v, label: slotFieldEnumLabel(field.key, v) }))
+					: valueChoices(field.valueType)
+			const primitiveDefault = field.default as string | number | boolean | null | undefined
+			const fieldOpt: SomeCompanionActionInputField =
+				field.valueType.kind === 'string'
+					? {
+							type: 'textinput',
+							id: `slot_${field.key}`,
+							label: field.label,
+							default: (primitiveDefault as string) ?? '',
+						}
+					: {
+							type: 'dropdown',
+							id: `slot_${field.key}`,
+							label: field.label,
+							default: ((choices[0]?.id ?? primitiveDefault) as string | number) ?? '',
+							choices,
+						}
+			opts.push(fieldOpt)
 		}
 
-		opts.push({
-			type: 'dropdown',
-			id: 'talkBtnMode',
-			label: 'Talk Button Mode',
-			default: talkModeChoices[0]?.id,
-			choices: talkModeChoices,
-		})
-
-		// Learn: read current key assignment from cached keyset
 		const dtKey = deviceType.replace(/[^a-z0-9]/gi, '_').toLowerCase()
 		actions[`assign_key_${dtKey}`] = {
 			name: `[${deviceType}] Assign Key`,
@@ -422,6 +435,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 				const slots = ((keyset['settings'] as Record<string, unknown>)?.['keysets'] ?? []) as Record<string, unknown>[]
 				const slot = slots.find((s) => (s['keysetIndex'] as number) === Number(action.options['keyIndex']))
 				if (!slot) return undefined
+
 				const entities = slot['entities'] as Record<string, unknown>[] | undefined
 				const entity = entities?.[0]
 				let assignTo = ''
@@ -432,26 +446,33 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 					else if (entity['type'] === 0) assignTo = `conn:${res.split('/').pop()}`
 					else if (entity['type'] === 1) assignTo = `port:${res.split('/').pop()}`
 				}
-				const activationState = slot['activationState'] as string | undefined
-				const talkBtnMode = slot['talkBtnMode'] as string | undefined
-				if (talkBtnMode === undefined) return undefined
-				return {
-					...action.options,
-					assignTo,
-					activationState,
-					talkBtnMode,
+
+				// Dynamically read back all slot fields
+				const learnedSlotOpts: Record<string, unknown> = { assignTo }
+				for (const field of caps.slotFields) {
+					const val = slot[field.key]
+					if (val !== undefined && (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean')) {
+						learnedSlotOpts[`slot_${field.key}`] = String(val)
+					}
 				}
+
+				return { ...action.options, ...learnedSlotOpts } as CompanionOptionValues
 			},
 			callback: async (action: CompanionActionEvent) => {
 				const roleIds = (action.options['roleIds'] as string[]).map(Number)
+				// Collect all slot field values from action options
+				const slotValues: Record<string, unknown> = {}
+				for (const field of caps.slotFields) {
+					const raw = action.options[`slot_${field.key}`] as string | undefined
+					if (raw !== undefined) slotValues[field.key] = parseValue(raw, field.valueType)
+				}
 				await withTimeout(`assign_key_${deviceType}`, instance, async () => {
 					await arcadia.assignKeyChannel(
 						instance,
 						roleIds,
 						Number(action.options['keyIndex']),
 						action.options['assignTo'] as string,
-						action.options['activationState'] as string,
-						action.options['talkBtnMode'] as string,
+						slotValues,
 						deviceType,
 					)
 				})

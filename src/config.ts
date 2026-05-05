@@ -79,6 +79,7 @@ export interface ModuleConfig extends JsonObject {
 	endpointTypes: string[]
 	logLevel: 'debug' | 'info' | 'none' | null
 	schemaCache: Record<string, CachedSchema> | null
+	refreshSchema: boolean | null
 }
 
 export interface ModuleSecrets extends JsonObject {
@@ -121,6 +122,21 @@ export function GetConfigFields(): SomeCompanionConfigField[] {
 				{ id: 'info', label: 'Info' },
 				{ id: 'none', label: 'None' },
 			],
+		},
+		{
+			type: 'static-text',
+			id: 'refreshSchemaLabel',
+			label: 'Schema',
+			value:
+				'Check this box and click Save to force a fresh schema download from the device on next connect. The box will automatically uncheck after the refresh is triggered.',
+			width: 12,
+		},
+		{
+			type: 'checkbox',
+			id: 'refreshSchema',
+			label: 'Refresh schema on next connect',
+			width: 12,
+			default: false,
 		},
 	]
 }
