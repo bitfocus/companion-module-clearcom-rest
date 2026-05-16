@@ -1,6 +1,7 @@
 {
     "settings": {
-        "print.sourcecode.colourScheme": "Visual Studio"
+        "print.sourcecode.colourScheme": "Visual Studio",
+        "typescript.tsdk": "node_modules/typescript/lib"
     },
     "folders": [
         {
