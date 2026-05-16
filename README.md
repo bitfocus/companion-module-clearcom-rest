@@ -4,7 +4,11 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
-### 0.3.2
+### 0.3.4
+
+- Cleanup of code
+
+#### 0.3.2
 
 - Ability to work offline
 - Fix key labels
