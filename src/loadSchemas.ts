@@ -84,13 +84,13 @@ export async function loadSchemasAndRefs(self: ModuleInstance, deviceHost: strin
 					...(self.config.schemaCache ?? {}),
 					[cacheKey]: { version: firmwareVersion, data: filtered as unknown as CachedSchema['data'] },
 				}
-				self.saveConfig({ ...self.config, schemaCache: updatedCache } as ModuleConfig, undefined)
+				self.saveConfig({ ...self.config, schemaCache: updatedCache }, undefined)
 
 				mainSchema = filtered as unknown as OpenAPIV3.Document
 				refSchemas = fetchedRefs
 
 				// Write to disk only when we've fetched a fresh schema — path is schemas/<cacheKey>/
-				void writeSchemasToDir(cacheKey, mainSchema, refSchemas as Record<string, unknown>)
+				void writeSchemasToDir(cacheKey, mainSchema, refSchemas)
 			} else {
 				log.info(`Schema already cached for ${cacheKey}, using cached`)
 			}
