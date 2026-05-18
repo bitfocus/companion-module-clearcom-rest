@@ -400,9 +400,19 @@ function handleEndpointUpdated(instance: ModuleInstance, event: EndpointUpdatedE
 
 	if (event.path === 'liveStatus.keyState') {
 		if (Object.keys(existing).length > 0) {
-			instance.endpointStatus.set(endpointId, { ...existing, keyState: event.value as DeviceRecord })
+			instance.endpointStatus.set(endpointId, { ...existing, keyState: event.value })
 			instance.triggerFeedbacksForStore('endpointStatus')
 		}
+		return
+	}
+
+	if (event.path === 'liveStatus.callState') {
+		if (Object.keys(existing).length > 0) {
+			instance.endpointStatus.set(endpointId, { ...existing, callState: event.value })
+		} else {
+			instance.endpointStatus.set(endpointId, { callState: event.value })
+		}
+		instance.triggerFeedbacksForStore('endpointStatus')
 		return
 	}
 }

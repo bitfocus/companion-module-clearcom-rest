@@ -4,7 +4,11 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
-### 0.3.4
+### 0.3.5
+
+- Fix call_from and call_to value feedbacks
+
+#### 0.3.4
 
 - Cleanup of code
 

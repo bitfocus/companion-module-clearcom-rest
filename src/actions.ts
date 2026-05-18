@@ -414,7 +414,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 							type: 'dropdown',
 							id: `slot_${field.key}`,
 							label: field.label,
-							default: ((choices[0]?.id ?? primitiveDefault) as string | number) ?? '',
+							default: choices[0]?.id ?? primitiveDefault ?? '',
 							choices,
 						}
 			opts.push(fieldOpt)

@@ -337,19 +337,15 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 		call_from: {
 			type: 'value',
 			name: 'Call From',
-			description: 'Label of the participant currently sending a call',
+			description: 'Label of the beltpack currently sending a call (from connections liveStatus)',
 			options: [],
 			unsubscribe: unsubscribeFn(instance),
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'connections')
-				const seen = new Set<number>()
 				for (const conn of instance.connections.values()) {
 					const participants = (conn['participants'] as DeviceRecord[] | undefined) ?? []
 					for (const p of participants) {
-						const pId = p['id'] as number
-						const pEvents = p['events'] as DeviceRecord | undefined
-						if (pEvents?.['call'] && !seen.has(pId)) {
-							seen.add(pId)
+						if ((p['events'] as DeviceRecord | undefined)?.['call']) {
 							return p['label'] as JsonValue
 						}
 					}
@@ -358,19 +354,20 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			},
 		},
 
-		// ── Call To (which connection has a call) ─────────────────────────────
+		// ── Call To (which beltpack has an active inbound call) ───────────────
 		call_to: {
 			type: 'value',
 			name: 'Call To',
-			description: 'Label of the connection receiving an active call',
+			description: 'Label of the beltpack receiving an active inbound call (from endpointStatus.callState)',
 			options: [],
 			unsubscribe: unsubscribeFn(instance),
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
-				subscribe(instance, feedback.feedbackId, 'connections')
-				for (const conn of instance.connections.values()) {
-					const participants = (conn['participants'] as DeviceRecord[] | undefined) ?? []
-					const hasCall = participants.some((p) => (p['events'] as DeviceRecord | undefined)?.['call'])
-					if (hasCall) return conn['label'] as JsonValue
+				subscribe(instance, feedback.feedbackId, 'endpointStatus')
+				for (const [epId, status] of instance.endpointStatus) {
+					if (status['callState'] === true) {
+						const ep = instance.endpoints.get(epId)
+						return (ep?.['label'] as string | undefined) ?? String(epId)
+					}
 				}
 				return ''
 			},
