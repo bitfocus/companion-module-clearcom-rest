@@ -498,3 +498,12 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 
 	return result
 }
+
+// ─── GPI capabilities ─────────────────────────────────────────────────────────
+// Returns true if the loaded schemas include GPI event schemas, indicating
+// this firmware supports GPI. The actual GPI count is fetched at runtime
+// from the device's interface capability endpoints.
+
+export function parseGpiCapabilities(loadedSchemas: LoadedSchemas): boolean {
+	return 'request_schemas/gpi_events_post_add.schema.json' in (loadedSchemas.refSchemas as Record<string, unknown>)
+}

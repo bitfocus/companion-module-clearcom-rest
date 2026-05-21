@@ -1,7 +1,7 @@
 // ─── Feedback store type ─────────────────────────────────────────────────────
 // All valid store names used for feedbackTriggers, including 'nulling' which is
 // a special non-store trigger used only by the nulling poll loop.
-export type FeedbackStore = ReadDef['store'] | 'nulling'
+export type FeedbackStore = ReadDef['store'] | 'nulling' | 'gpi'
 
 // ─── ControlDef ───────────────────────────────────────────────────────────────
 // The universal structure produced by parseschema.ts.

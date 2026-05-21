@@ -56,7 +56,7 @@ function buildHeaders(instance: ModuleInstance): Record<string, string> {
 }
 
 async function executeRequest<R>(
-	method: 'GET' | 'POST' | 'PUT',
+	method: 'GET' | 'POST' | 'PUT' | 'DELETE',
 	url: string,
 	instance: ModuleInstance,
 	body?: unknown,
@@ -64,7 +64,7 @@ async function executeRequest<R>(
 	return enqueue(async () => {
 		const shortUrl = url.replace(/.*\/api/, '/api')
 		log.info(`→ ${method} ${shortUrl}`)
-		log.debug(`→ ${method} ${shortUrl}${body !== undefined ? ` ${JSON.stringify(body)}` : ''}`)
+		if (body !== undefined) log.debug(`  body: ${JSON.stringify(body)}`)
 		const init: RequestInit = {
 			method,
 			headers:
@@ -94,6 +94,10 @@ export async function postRequest<R>(url: string, instance: ModuleInstance, body
 
 export async function putRequest<R>(url: string, instance: ModuleInstance, body: unknown = {}): Promise<R> {
 	return executeRequest<R>('PUT', url, instance, body)
+}
+
+export async function deleteRequest<R = unknown>(url: string, instance: ModuleInstance): Promise<R> {
+	return executeRequest<R>('DELETE', url, instance)
 }
 
 // ─── Keepalive / token refresh ────────────────────────────────────────────────
@@ -453,9 +457,15 @@ async function initialFetch(instance: ModuleInstance, gen: number): Promise<void
 		if (!check()) return
 		await fetchNullingStatus(instance)
 		if (!check()) return
+		await fetchGpiCount(instance)
+		if (!check()) return
 		instance.rebuildIfChanged()
 		instance.triggerFeedbacksForStore('endpoints')
 		instance.triggerFeedbacksForStore('endpointStatus')
+		if (instance.gpiCount > 0) {
+			instance.forceRebuild()
+		}
+
 		log.info('Initial fetch complete')
 	} catch (error) {
 		if (check()) log.error(`Initial fetch failed: ${String(error)}`)
@@ -482,6 +492,7 @@ const HANDLED_EVENTS = new Set([
 	'live:endpoints',
 	'live:devices',
 	'live:ports',
+	'live:gpios',
 	'init',
 	'EndpointUpdated',
 ])
@@ -527,7 +538,12 @@ export function connectSocket(instance: ModuleInstance): void {
 		log.debug('live:roles — refreshing keysets')
 		void fetchAndRebuild(
 			instance,
-			Promise.all([fetchKeysets(instance), fetchRolesets(instance)]).then(() => undefined),
+			Promise.all([fetchKeysets(instance), fetchRolesets(instance)]).then(async () =>
+				// Re-fetch endpoints so endpointStatus.keyState (volumes, states) reflects
+				// the new assignment immediately — the Arcadia doesn't always push an
+				// EndpointUpdated event after a key assignment change.
+				fetchEndpoints(instance),
+			),
 		)
 	})
 
@@ -559,6 +575,11 @@ export function connectSocket(instance: ModuleInstance): void {
 	socket.on('live:devices', (_data: unknown) => {
 		log.debug('live:devices — refreshing device info')
 		void fetchDevice(instance)
+	})
+
+	socket.on('live:gpios', (_data: unknown) => {
+		log.debug('live:gpios — refreshing GPI events')
+		void fetchGpiCount(instance).then(() => instance.forceRebuild())
 	})
 
 	socket.on('init', (data: unknown) => {
@@ -612,5 +633,40 @@ export function disconnectSocket(): void {
 		socket.disconnect()
 		socket = null
 		log.info('Socket disconnected')
+	}
+}
+
+// ─── GPI fetch ────────────────────────────────────────────────────────────────
+// Fetches all GPIO records from the device, filters for type=0 (GPI),
+// and populates gpiIds, gpiCount, and gpiEvents from settings.events on each record.
+
+export async function fetchGpiCount(instance: ModuleInstance): Promise<void> {
+	try {
+		const response = await getRequest<Record<string, unknown>[]>(
+			`http://${instance.config.host}/api/1/devices/1/gpio`,
+			instance,
+		)
+		// type 0 = GPI, type 1 = GPO
+		const gpis = response.filter((g) => (g['type'] as number) === 0)
+		const ids = gpis.map((g) => g['id'] as number)
+
+		instance.gpiIds = ids
+		instance.gpiCount = ids.length
+
+		// Populate events from settings.events on each GPI record
+		instance.gpiEvents.clear()
+		for (const gpio of gpis) {
+			const id = gpio['id'] as number
+			const settings = gpio['settings'] as Record<string, unknown> | undefined
+			const events = (settings?.['events'] as DeviceRecord[] | undefined) ?? []
+			instance.gpiEvents.set(id, events)
+		}
+
+		log.info(
+			`GPI count: ${ids.length} (ids: ${ids.join(', ')}) — events: ${[...instance.gpiEvents.entries()].map(([k, v]) => `GPI${k}:${v.length}`).join(', ')}`,
+		)
+		instance.triggerFeedbacksForStore('gpi')
+	} catch (error) {
+		log.error(`fetchGpiCount failed: ${String(error)}`)
 	}
 }

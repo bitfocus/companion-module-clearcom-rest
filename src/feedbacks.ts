@@ -231,7 +231,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'endpointStatus')
 				const k = getKeyState(Number(feedback.options['roleId']), feedback.options['keyIndex'] as string)
-				return k?.['currentState'] as JsonValue
+				return (k?.['currentState'] ?? false) as JsonValue
 			},
 		},
 
@@ -243,7 +243,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'endpointStatus')
 				const k = getKeyState(Number(feedback.options['roleId']), feedback.options['keyIndex'] as string)
-				return k?.['volume'] as JsonValue
+				return (k?.['volume'] ?? false) as JsonValue
 			},
 		},
 
@@ -254,7 +254,8 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			unsubscribe: unsubscribeFn(instance),
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'keysets')
-				return getKeyAssign(Number(feedback.options['roleId']), Number(feedback.options['keyIndex']))
+				return (getKeyAssign(Number(feedback.options['roleId']), Number(feedback.options['keyIndex'])) ||
+					false) as JsonValue
 			},
 		},
 
@@ -272,7 +273,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 					const dpId = (status['association'] as DeviceRecord | undefined)?.['dpId'] as number | undefined
 					if (dpId === roleId) return epId as JsonValue
 				}
-				return null
+				return false
 			},
 		},
 
@@ -286,7 +287,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 				subscribe(instance, feedback.feedbackId, 'endpointStatus')
 				const status = instance.endpointStatus.get(Number(feedback.options['endpointId']))
 				const dpId = (status?.['association'] as DeviceRecord | undefined)?.['dpId'] as number | undefined
-				return dpId !== undefined ? (dpId as JsonValue) : null
+				return (dpId ?? false) as JsonValue
 			},
 		},
 
@@ -329,7 +330,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'endpoints')
 				const gw = instance.gateways.get(Number(feedback.options['endpointId']))
-				return (gw?.['liveStatus'] as DeviceRecord | undefined)?.['status'] as JsonValue
+				return ((gw?.['liveStatus'] as DeviceRecord | undefined)?.['status'] ?? false) as JsonValue
 			},
 		},
 
@@ -350,7 +351,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 						}
 					}
 				}
-				return ''
+				return false
 			},
 		},
 
@@ -366,10 +367,10 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 				for (const [epId, status] of instance.endpointStatus) {
 					if (status['callState'] === true) {
 						const ep = instance.endpoints.get(epId)
-						return (ep?.['label'] as string | undefined) ?? String(epId)
+						return ((ep?.['label'] as string | undefined) ?? String(epId)) as JsonValue
 					}
 				}
-				return ''
+				return false
 			},
 		},
 
@@ -431,6 +432,31 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 					},
 				}
 			: {}),
+
+		// ── GPI triggered ────────────────────────────────────────────────────
+		gpi_triggered: {
+			type: 'boolean',
+			name: '[NEP] GPI Triggered',
+			description: 'True when the specified GPI index was last asserted via a Trigger GPI action.',
+			defaultStyle: { bgcolor: 0xff8800, color: 0x000000 },
+			options: [
+				{
+					type: 'dropdown',
+					id: 'gpiId',
+					label: 'GPI',
+					default: '0',
+					choices: Array.from({ length: instance.gpiCount || 1 }, (_, i) => ({
+						id: String(i),
+						label: `GPI ${i + 1}`,
+					})),
+				},
+			],
+			unsubscribe: unsubscribeFn(instance),
+			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
+				subscribe(instance, feedback.feedbackId, 'gpi')
+				return instance.gpiState.get(Number(feedback.options['gpiId'])) === true
+			},
+		},
 	}
 
 	return feedbacks

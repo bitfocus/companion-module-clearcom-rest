@@ -15,7 +15,7 @@ import { postRequest, fetchDevice } from './network.js'
 import { makeLogger } from './logger.js'
 import { connect, disconnect, filterControlDefs } from './commands.js'
 import { loadSchemasAndRefs, clearSchemaCache } from './loadSchemas.js'
-import { buildControlDefs, parseKeyAssignCapabilities } from './parseSchemas.js'
+import { buildControlDefs, parseKeyAssignCapabilities, parseGpiCapabilities } from './parseSchemas.js'
 import { DeviceRecord, DeviceInfo, ControlDef, KeyAssignCapabilities, FeedbackStore } from './types.js'
 
 export interface ModuleTypes extends InstanceTypes {
@@ -49,6 +49,11 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 	// ─── Nulling state ────────────────────────────────────────────────────────
 	nullingStatus: Map<number, string> = new Map()
 
+	// ─── GPI state ────────────────────────────────────────────────────────────
+	gpiState: Map<number, boolean> = new Map()
+	gpiEvents: Map<number, DeviceRecord[]> = new Map()
+	gpiIds: number[] = []
+	gpiCount: number = 0
 	private readonly _log = makeLogger('main', () => this.config)
 
 	constructor(internal: unknown) {
@@ -108,7 +113,8 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 		const ports = [...this.ports.values()].map((p) => `${p['port_id']}:${p['port_label']}`).join(',')
 		const connections = [...this.connections.values()].map((c) => `${c['id']}:${c['label']}`).join(',')
 		const keysets = [...this.keysets.keys()].join(',')
-		return `${endpoints}|${rolesets}|${ports}|${connections}|${keysets}`
+		const gpiEvents = [...this.gpiEvents.entries()].map(([k, evs]) => `${k}:${evs.length}`).join(',')
+		return `${endpoints}|${rolesets}|${ports}|${connections}|${keysets}|${gpiEvents}`
 	}
 
 	rebuildIfChanged(): void {
@@ -126,9 +132,7 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 
 	updateVariables(): void {
 		if (!this.deviceInfo) return
-		console.log('\nCalling updateVariableDefinitions\n')
 		UpdateVariableDefinitions(this)
-		console.log('\nCalling updateVariableValues\n')
 		UpdateVariableValues(this)
 	}
 
@@ -156,6 +160,7 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 			const loaded = await loadSchemasAndRefs(this, apiBaseUrl)
 			this.controlDefs = filterControlDefs(buildControlDefs(loaded))
 			this.keyAssignCapabilities = parseKeyAssignCapabilities(loaded)
+			if (!parseGpiCapabilities(loaded)) this.gpiCount = 0
 			this._log.info(
 				`Schema version: ${loaded.mainSchema.info.version} — ${this.controlDefs.length} control defs loaded`,
 			)

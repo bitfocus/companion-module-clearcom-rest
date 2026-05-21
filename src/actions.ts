@@ -7,7 +7,7 @@ import {
 import ModuleInstance from './main.js'
 import * as arcadia from './arcadia.js'
 import { makeLogger } from './logger.js'
-import { DeviceRequestError } from './network.js'
+import { postRequest, putRequest, deleteRequest, DeviceRequestError } from './network.js'
 import { ControlDef, SettingValueType } from './types.js'
 
 // ─── Value option builder ─────────────────────────────────────────────────────
@@ -250,6 +250,41 @@ function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions 
 
 // ─── Manual actions ───────────────────────────────────────────────────────────
 
+// Builds resource-path-keyed choices with consistent "Category: Label" prefixes.
+// Used wherever the API expects res paths (e.g. GPI routing source/destination).
+function buildEntityChoices(
+	instance: ModuleInstance,
+	include: { connections?: boolean; roles?: boolean; ports?: boolean; splitInput?: boolean; splitOutput?: boolean },
+): Choice[] {
+	const choices: Choice[] = []
+	if (include.connections) {
+		for (const c of instance.connections.values())
+			choices.push({ id: `/api/1/connections/${c['id'] as string}`, label: `Channel: ${c['label'] as string}` })
+	}
+	if (include.roles) {
+		for (const r of instance.rolesets.values())
+			choices.push({ id: r['res'] as string, label: `Role: ${(r['label'] ?? r['name']) as string}` })
+	}
+	if (include.ports) {
+		for (const p of instance.ports.values()) {
+			const splitLabel = (p['port_settings'] as Record<string, unknown> | undefined)?.['port_splitLabel']
+			if (!splitLabel) choices.push({ id: p['res'] as string, label: `Port: ${p['port_label'] as string}` })
+		}
+	}
+	if (include.splitInput || include.splitOutput) {
+		for (const p of instance.ports.values()) {
+			const splitLabel = (p['port_settings'] as Record<string, unknown> | undefined)?.['port_splitLabel'] as
+				| Record<string, unknown>
+				| undefined
+			if (!splitLabel) continue
+			const dir = splitLabel['direction'] as string | undefined
+			if ((include.splitInput && dir === 'input') || (include.splitOutput && dir === 'output'))
+				choices.push({ id: p['res'] as string, label: `${p['port_label'] as string}` })
+		}
+	}
+	return choices
+}
+
 function buildManualActions(instance: ModuleInstance): CompanionActionDefinitions {
 	const rChoices = arcadia.roleChoices(instance)
 	const selectedTypes = instance.config.endpointTypes ?? []
@@ -480,10 +515,161 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		}
 	}
 
-	return actions
-}
+	// GPI routing + trigger — always available
+	// gpiChoices is shared between both actions.
+	const gpiCount = instance.gpiIds.length > 0 ? instance.gpiIds.length : Math.max(instance.gpiCount, 1)
+	const gpiChoices = Array.from({ length: gpiCount }, (_, i) => ({ id: String(i), label: `GPI ${i + 1}` }))
 
-// ─── Public entry point ───────────────────────────────────────────────────────
+	{
+		// Source: Roles, non-split Ports, input-direction split ports (e.g. PGM)
+		const sourceChoices = buildEntityChoices(instance, { roles: true, ports: true, splitInput: true })
+		// Destination: Channels, Roles, non-split Ports, output-direction split ports (e.g. SA)
+		const destinationChoices = buildEntityChoices(instance, {
+			connections: true,
+			roles: true,
+			ports: true,
+			splitOutput: true,
+		})
+
+		// Single flat event dropdown: "GPI X – <Add New>" + "GPI X – Event N" for each cached event.
+		// The ID encodes both GPI and event: "add_<gpiIdx>" or "<gpiIdx>:<eventId>".
+		const eventRefChoices: Choice[] = []
+		for (let i = 0; i < gpiChoices.length; i++) {
+			const events = instance.gpiEvents.get(i) ?? []
+			events.forEach((ev, j) => {
+				eventRefChoices.push({
+					id: `${i}:${String((ev['id'] as string | number | undefined) ?? j)}`,
+					label: `[GPI ${i + 1}] Event ${j + 1}`,
+				})
+			})
+			eventRefChoices.push({ id: `add_${i}`, label: `[GPI ${i + 1}] <Add New>` })
+		}
+		if (eventRefChoices.length === 0) eventRefChoices.push({ id: 'add_0', label: '[GPI 1] <Add New>' })
+
+		actions['set_gpi_routing'] = {
+			name: '[NEP] Set GPI Routing',
+			description: 'Add, update, or delete a GPI routing event.',
+			options: [
+				{
+					type: 'dropdown',
+					id: 'eventRef',
+					label: 'Event',
+					default: eventRefChoices[0]?.id ?? 'add_0',
+					choices: eventRefChoices,
+				},
+				{
+					type: 'dropdown',
+					id: 'source',
+					label: 'Source',
+					default: sourceChoices[0]?.id ?? '',
+					choices: sourceChoices,
+					isVisibleExpression: "$(options:routingAction) !== 'delete'",
+				},
+				{
+					type: 'dropdown',
+					id: 'destination',
+					label: 'Destination',
+					default: destinationChoices[0]?.id ?? '',
+					choices: destinationChoices,
+					isVisibleExpression: "$(options:routingAction) !== 'delete'",
+				},
+				{
+					type: 'dropdown',
+					id: 'routingAction',
+					label: 'Action',
+					default: 'xpt',
+					choices: [
+						{ id: 'xpt', label: 'XPT (Crosspoint Routing)' },
+						{ id: 'call', label: 'Call' },
+						{ id: 'delete', label: 'Delete Event' },
+					],
+				},
+			],
+			learn: (action) => {
+				const ref = (action.options['eventRef'] as string | undefined) ?? ''
+				if (!ref.includes(':')) return undefined
+				const [gpiPart, eventPart] = ref.split(':')
+				const gpiIdx = Number(gpiPart)
+				const events = instance.gpiEvents.get(gpiIdx) ?? []
+				const event = events.find((e) => String((e['id'] as string | number | undefined) ?? '') === eventPart)
+				if (!event) return undefined
+				return {
+					...action.options,
+					source: (event['source'] as string | undefined) ?? '',
+					destination: (event['destination'] as string | undefined) ?? '',
+					routingAction: (event['action'] as string | undefined) ?? 'xpt',
+				}
+			},
+			callback: async (actionEvt: CompanionActionEvent) => {
+				const ref = (actionEvt.options['eventRef'] as string | undefined) ?? 'add_0'
+				const isAdd = ref.startsWith('add_')
+				const gpiIdx = isAdd ? Number(ref.slice(4)) : Number(ref.split(':')[0])
+				const refEventId = isAdd ? '' : ref.split(':')[1]
+				const routingAction = actionEvt.options['routingAction'] as string
+				const base = `http://${instance.config.host}/api/1/devices/1/gpi/${gpiIdx}/events`
+
+				await withTimeout('set_gpi_routing', instance, async () => {
+					if (routingAction === 'delete') {
+						await deleteRequest(`${base}/${refEventId}`, instance)
+					} else {
+						const body = {
+							source: actionEvt.options['source'] as string,
+							destination: actionEvt.options['destination'] as string,
+							action: routingAction,
+						}
+						if (isAdd) {
+							await postRequest<Record<string, unknown>>(base, instance, body)
+						} else {
+							await putRequest(`${base}/${refEventId}`, instance, body)
+						}
+					}
+					// live:gpios socket event will trigger the refresh; no need to fetch here
+				})
+			},
+		}
+	}
+
+	// GPI trigger — always available
+	actions['trigger_gpi'] = {
+		name: '[NEP] Trigger GPI',
+		description: 'Manually assert or deassert a GPI input on the device.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'gpiId',
+				label: 'GPI',
+				default: '0',
+				choices: gpiChoices,
+			},
+			{
+				type: 'dropdown',
+				id: 'enabled',
+				label: 'State',
+				default: 'true',
+				choices: [
+					{ id: 'true', label: 'ON' },
+					{ id: 'false', label: 'OFF' },
+					{ id: 'toggle', label: 'Toggle' },
+				],
+			},
+		],
+		callback: async (action: CompanionActionEvent) => {
+			const gpiId = Number(action.options['gpiId'])
+			const mode = action.options['enabled'] as string
+			const enabled = mode === 'toggle' ? !(instance.gpiState.get(gpiId) ?? false) : mode === 'true'
+			await withTimeout('trigger_gpi', instance, async () => {
+				await postRequest(`http://${instance.config.host}/api/1/devices/1/setGPI`, instance, {
+					id: gpiId,
+					enabled,
+				})
+				instance.gpiState.set(gpiId, enabled)
+				instance.triggerFeedbacksForStore('gpi')
+			})
+		},
+	}
+
+	return actions
+} // ─── Public entry point ───────────────────────────────────────────────────────
 
 export function UpdateActions(instance: ModuleInstance): void {
 	instance.setActionDefinitions({
