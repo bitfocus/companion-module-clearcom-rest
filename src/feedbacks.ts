@@ -8,11 +8,11 @@ import {
 } from '@companion-module/base'
 import ModuleInstance from './main.js'
 import { getField, roleChoices, endpointChoices, portChoices, findKeysetIdForRole } from './arcadia.js'
-import { ControlDef, DeviceRecord } from './types.js'
+import { ControlDef, DeviceRecord, FeedbackStore } from './types.js'
 import { drawMeter, MeterStyle } from './indicators.js'
 
-function subscribe(instance: ModuleInstance, feedbackId: string, store: string): void {
-	instance.feedbackTriggers.set(feedbackId, store as import('./types.js').FeedbackStore)
+function subscribe(instance: ModuleInstance, feedbackId: string, store: FeedbackStore): void {
+	instance.feedbackTriggers.set(feedbackId, store)
 }
 
 function unsubscribeFn(instance: ModuleInstance) {
