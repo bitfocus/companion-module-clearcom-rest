@@ -15,6 +15,7 @@ import {
 	fetchRolesetsGids,
 	fetchKeysets,
 	fetchKeysetsGids,
+	DeviceRequestError,
 } from './network.js'
 import { ControlDef, DeviceRecord } from './types.js'
 import { DEVICE_TYPE_TO_KEYSET_TYPE } from './parseSchemas.js'
@@ -158,6 +159,7 @@ export async function executeWrite(
 		log.info(`executeWrite ${def.id} record=${recordId} value=${JSON.stringify(resolvedValue)}`)
 		await callFetch(instance, def.write.fetchFn, record['gid'] as string | undefined)
 	} catch (error) {
+		if (!(error instanceof DeviceRequestError)) throw error
 		log.error(`executeWrite ${def.id} record=${recordId} failed: ${String(error)}`)
 	}
 }
@@ -217,6 +219,7 @@ async function putKeysets(
 		await fetchKeysets(instance)
 		instance.rebuildIfChanged()
 	} catch (error) {
+		if (!(error instanceof DeviceRequestError)) throw error
 		log.error(`${logTag} failed: ${String(error)}`)
 	}
 }
@@ -334,6 +337,7 @@ export async function remoteMicKill(instance: ModuleInstance, roleId: string): P
 		const response = await postRequest<{ ok: boolean }>(url, instance)
 		log.info(`RMK sent (role=${roleId || 'all'}): ${JSON.stringify(response)}`)
 	} catch (error) {
+		if (!(error instanceof DeviceRequestError)) throw error
 		log.error(`RMK failed (role=${roleId || 'all'}): ${String(error)}`)
 	}
 }
@@ -363,6 +367,7 @@ export async function sendCall(instance: ModuleInstance, roleId: string, active:
 		const response = await postRequest<{ ok: boolean }>(url, instance, body)
 		log.info(`Call (role=${roleId || 'all'} active=${active}): ${JSON.stringify(response)}`)
 	} catch (error) {
+		if (!(error instanceof DeviceRequestError)) throw error
 		log.error(`Call failed (role=${roleId || 'all'}): ${String(error)}`)
 	}
 }
@@ -381,6 +386,7 @@ export async function startNulling(instance: ModuleInstance, portIds: number[]):
 			log.info(`startNulling port=${portId}: ${result.nulling}`)
 			void pollNulling(instance, portId, url)
 		} catch (error) {
+			if (!(error instanceof DeviceRequestError)) throw error
 			log.error(`startNulling port=${portId} failed: ${String(error)}`)
 		}
 	}

@@ -3,6 +3,7 @@ import {
 	CompanionActionEvent,
 	CompanionOptionValues,
 	SomeCompanionActionInputField,
+	InstanceStatus,
 } from '@companion-module/base'
 import ModuleInstance from './main.js'
 import * as arcadia from './arcadia.js'
@@ -140,8 +141,10 @@ async function withTimeout(name: string, instance: ModuleInstance, fn: () => Pro
 	])
 	if (result === timeoutSentinel) {
 		log.error(`Action "${name}" timed out`)
+		instance.updateStatus(InstanceStatus.ConnectionFailure, `Action "${name}" timed out`)
 	} else if (result instanceof Error && !(result instanceof DeviceRequestError)) {
 		log.error(`Action "${name}" failed: ${result.message}`)
+		instance.updateStatus(InstanceStatus.ConnectionFailure, result.message)
 	}
 }
 
