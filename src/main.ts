@@ -177,7 +177,7 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 	private async _loadSchemasOffline(apiBaseUrl: string): Promise<void> {
 		if (!this.config.schemaCache || Object.keys(this.config.schemaCache).length === 0) return
 		try {
-			const loaded = await loadSchemasAndRefs(this, apiBaseUrl)
+			const loaded = await loadSchemasAndRefs(this, apiBaseUrl, true)
 			this.controlDefs = filterControlDefs(buildControlDefs(loaded))
 			this.keyAssignCapabilities = parseKeyAssignCapabilities(loaded)
 			this._log.info(`Offline: loaded ${this.controlDefs.length} control defs from cache`)

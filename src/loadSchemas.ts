@@ -21,7 +21,11 @@ export type LoadedSchemas = {
 
 // ─── Schema loading (version-aware, config-cached, per-device filtered) ───────
 
-export async function loadSchemasAndRefs(self: ModuleInstance, deviceHost: string): Promise<LoadedSchemas> {
+export async function loadSchemasAndRefs(
+	self: ModuleInstance,
+	deviceHost: string,
+	offlineOnly = false,
+): Promise<LoadedSchemas> {
 	_instance = self
 
 	// Device type is only known after fetchDevice — use 'unknown' as a fallback key
@@ -49,6 +53,10 @@ export async function loadSchemasAndRefs(self: ModuleInstance, deviceHost: strin
 	}
 
 	// Try to fetch live schema to check version
+	if (offlineOnly) {
+		if (!mainSchema) throw new Error('No cached schema available for offline mode')
+		return { mainSchema, refSchemas }
+	}
 	try {
 		const res = await getRequest(apiUrl, self)
 		if (res) {

@@ -4,11 +4,12 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
-### 0.4.0
+#### 0.4.1
 
+- Fixups for submission to companion
 - Add GPI functions
 
-### 0.3.5
+#### 0.3.5
 
 - Fix call_from and call_to value feedbacks
 

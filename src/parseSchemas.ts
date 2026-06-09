@@ -1,6 +1,9 @@
 import { ControlDef, SettingValueType, KeyAssignCapabilities, KeySlotField } from './types.js'
 import { LoadedSchemas } from './loadSchemas.js'
 import { SKIP_PORT_SETTINGS, SKIP_KEYSET_SETTINGS, SKIP_LIVE_STATUS } from './commands.js'
+import { makeLogger } from './logger.js'
+
+const log = makeLogger('parseSchemas', () => undefined)
 
 // ─── Device type mapping ──────────────────────────────────────────────────────
 // Maps schema definition names to the device type strings the Arcadia uses.
@@ -462,7 +465,7 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 		const schemaKeyCount = keysets?.['maxItems'] as number | undefined
 		const keyCount = V_SERIES_KEY_COUNT[deviceType] ?? schemaKeyCount
 		if (keyCount === undefined) {
-			console.warn(`parseKeyAssignCapabilities: no keyCount for ${deviceType} — skipping`)
+			log.warn(`parseKeyAssignCapabilities: no keyCount for ${deviceType} — skipping`)
 			continue
 		}
 

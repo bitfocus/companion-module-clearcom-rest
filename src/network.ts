@@ -65,8 +65,10 @@ async function executeRequest<R>(
 		const shortUrl = url.replace(/.*\/api/, '/api')
 		log.info(`→ ${method} ${shortUrl}`)
 		if (body !== undefined) log.debug(`  body: ${JSON.stringify(body)}`)
+		const abort = AbortSignal.timeout(8000)
 		const init: RequestInit = {
 			method,
+			signal: abort,
 			headers:
 				body !== undefined ? { ...buildHeaders(instance), 'Content-Type': 'application/json' } : buildHeaders(instance),
 		}
@@ -523,6 +525,11 @@ export function connectSocket(instance: ModuleInstance): void {
 	socket.on('connect_error', (err: Error) => {
 		log.error(`Socket connect error: ${err.message}`)
 		instance.updateStatus(InstanceStatus.ConnectionFailure, err.message)
+	})
+
+	socket.on('error', (err: Error) => {
+		log.error(`Socket error: ${String(err)}`)
+		instance.updateStatus(InstanceStatus.ConnectionFailure, String(err))
 	})
 
 	socket.on('DiscoveryInit', () => {

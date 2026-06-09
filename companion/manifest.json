@@ -1,10 +1,10 @@
 {
 	"$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
 	"id": "clearcom-rest",
-	"name": "clearcom rest",
+	"name": "clearcom-rest",
 	"shortname": "CC Rest",
 	"description": "A Module to control Clear-Com equipment that use a REST API",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"type": "connection",
 	"license": "MIT",
 	"repository": "git+https://github.com/MeestorX/companion-module-clearcom-rest.git",
