@@ -51,6 +51,8 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 	gpiCount: number = 0
 	private readonly _log = makeLogger('main', () => this.config)
 
+	keysetWriteQueue: Promise<void> = Promise.resolve()
+
 	constructor(internal: unknown) {
 		super(internal)
 	}

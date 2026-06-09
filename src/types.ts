@@ -72,4 +72,6 @@ export type KeySlotField = {
 export type KeyAssignCapabilities = {
 	keyCount: number
 	slotFields: KeySlotField[]
+	supportsCallKey: boolean
+	supportsBulkPut: boolean
 }

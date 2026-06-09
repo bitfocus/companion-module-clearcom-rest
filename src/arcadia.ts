@@ -31,11 +31,7 @@ export function getField(record: DeviceRecord, field: string): unknown {
 }
 
 export function findKeysetIdForRole(instance: ModuleInstance, roleId: number, deviceType: string): number | undefined {
-	const keysetTypes = DEVICE_TYPE_TO_KEYSET_TYPE[deviceType]
-	if (!keysetTypes) {
-		log.warn(`findKeysetIdForRole: no keyset types mapped for deviceType=${deviceType}`)
-		return undefined
-	}
+	const keysetTypes = DEVICE_TYPE_TO_KEYSET_TYPE[deviceType] ?? [deviceType]
 	const roleset = instance.rolesets.get(roleId)
 	if (!roleset) return undefined
 	const sessions = roleset['sessions'] as DeviceRecord | undefined
@@ -175,34 +171,54 @@ async function putKeysets(
 	logTag: string,
 	buildEntry: (keyset: DeviceRecord, keysetId: number) => Record<string, unknown> | null,
 ): Promise<void> {
-	const url = `http://${instance.config.host}/api/2/keysets`
-	const body: Record<string, unknown> = {}
-
-	for (const roleId of roleIds) {
-		const keysetId = findKeysetIdForRole(instance, roleId, deviceType)
-		if (keysetId === undefined) {
-			log.warn(`${logTag}: no matching keyset for role ${roleId} deviceType=${deviceType}`)
-			continue
-		}
-		const keyset = instance.keysets.get(keysetId)
-		if (!keyset) {
-			log.warn(`${logTag}: no cached keyset ${keysetId}`)
-			continue
-		}
-		const entry = buildEntry(keyset, keysetId)
-		if (entry) body[String(keysetId)] = entry
-	}
-
-	if (Object.keys(body).length === 0) return
+	// Serialize: wait for any in-flight keyset write+fetch to finish before
+	// reading the cache or sending a new PUT, so rapid successive actions
+	// don't overwrite each other with stale slot data.
+	const prev = instance.keysetWriteQueue.catch(() => {})
+	let release!: () => void
+	instance.keysetWriteQueue = new Promise<void>((r) => {
+		release = r
+	})
+	await prev
 
 	try {
-		await putRequest(url, instance, body)
-		log.info(`${logTag}: ok`)
-		await fetchKeysets(instance)
-		instance.rebuildIfChanged()
-	} catch (error) {
-		if (!(error instanceof DeviceRequestError)) throw error
-		log.error(`${logTag} failed: ${String(error)}`)
+		const url = `http://${instance.config.host}/api/2/keysets`
+		const body: Record<string, unknown> = {}
+
+		for (const roleId of roleIds) {
+			const keysetId = findKeysetIdForRole(instance, roleId, deviceType)
+			if (keysetId === undefined) {
+				log.warn(`${logTag}: no matching keyset for role ${roleId} deviceType=${deviceType}`)
+				continue
+			}
+			const keyset = instance.keysets.get(keysetId)
+			if (!keyset) {
+				log.warn(`${logTag}: no cached keyset ${keysetId}`)
+				continue
+			}
+			if (instance.keyAssignCapabilities[deviceType]?.supportsBulkPut === false) {
+				log.warn(
+					`${logTag}: skipping keyset ${keysetId} — type '${keyset['type'] as string}' is not accepted by PUT /api/2/keysets on this firmware`,
+				)
+				continue
+			}
+			const entry = buildEntry(keyset, keysetId)
+			if (entry) body[String(keysetId)] = entry
+		}
+
+		if (Object.keys(body).length === 0) return
+
+		try {
+			await putRequest(url, instance, body)
+			log.info(`${logTag}: ok`)
+			await fetchKeysets(instance)
+			instance.rebuildIfChanged()
+		} catch (error) {
+			if (!(error instanceof DeviceRequestError)) throw error
+			log.error(`${logTag} failed: ${String(error)}`)
+		}
+	} finally {
+		release()
 	}
 }
 
@@ -227,20 +243,17 @@ export async function setKeyset(
 		log.warn(`setKeyset ${def.id}: deviceType is undefined — refusing to write to avoid targeting wrong keyset`)
 		return
 	}
-	if (!DEVICE_TYPE_TO_KEYSET_TYPE[deviceType]) {
-		log.warn(`setKeyset ${def.id}: no keyset types mapped for deviceType=${deviceType}`)
-		return
-	}
 
 	await putKeysets(instance, roleIds, deviceType, `setKeyset ${def.id}`, (keyset) => {
 		let resolvedValue = value
 		if (mode !== 'absolute' && def.supportsIncDec && def.read) {
 			resolvedValue = resolveIncDec(getField(keyset, def.read.field), def.valueType, mode)
 		}
+		const keysetType = keyset['type'] as string
 		const isTopLevel = def.write!.keysetBodyLevel === 'top'
 		return isTopLevel
-			? { type: keyset['type'], [def.write!.bodyKey]: resolvedValue }
-			: { type: keyset['type'], settings: { [def.write!.bodyKey]: resolvedValue } }
+			? { type: keysetType, [def.write!.bodyKey]: resolvedValue }
+			: { type: keysetType, settings: { [def.write!.bodyKey]: resolvedValue } }
 	})
 }
 
@@ -279,17 +292,22 @@ export async function assignKeyChannel(
 	deviceType: string,
 ): Promise<void> {
 	await putKeysets(instance, roleIds, deviceType, `assignKeyChannel key=${keyIndex}`, (keyset) => {
+		const keysetType = keyset['type'] as string
+		const supportsCallKey = instance.keyAssignCapabilities[deviceType]?.supportsCallKey ?? false
 		const currentSlots = ((keyset['settings'] as DeviceRecord)?.['keysets'] as DeviceRecord[] | undefined) ?? []
 		const updatedSlots = currentSlots.map((slot) => {
 			if ((slot['keysetIndex'] as number) !== keyIndex) return slot
-			return {
+			const updatedSlot: Record<string, unknown> = {
 				...slot,
 				entities: assignTo === '' ? slot['entities'] : resolveKeyEntity(instance, assignTo),
-				isCallKey: assignTo === '' ? slot['isCallKey'] : assignTo === 'special:call',
 				...slotValues,
 			}
+			if (supportsCallKey) {
+				updatedSlot['isCallKey'] = assignTo === '' ? slot['isCallKey'] : assignTo === 'special:call'
+			}
+			return updatedSlot
 		})
-		return { type: keyset['type'], settings: { keysets: updatedSlots } }
+		return { type: keysetType, settings: { keysets: updatedSlots } }
 	})
 }
 

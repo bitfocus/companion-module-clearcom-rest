@@ -305,6 +305,27 @@ function buildRoleControlDefs(refSchemas: Record<string, Record<string, unknown>
 	return defs
 }
 
+function deriveDefinitionToDevice(
+	putSchema: Record<string, unknown>,
+	definitions: Record<string, Record<string, unknown>>,
+): Record<string, string> {
+	const derived: Record<string, string> = {}
+	const container = (putSchema['additionalProperties'] ?? putSchema) as Record<string, unknown>
+	for (const entry of (container['oneOf'] as Array<Record<string, unknown>>) ?? []) {
+		const ref = entry['$ref'] as string | undefined
+		if (!ref) continue
+		const roleDef = definitions[ref.split('/').pop() ?? '']
+		if (!roleDef) continue
+		const props = roleDef['properties'] as Record<string, Record<string, unknown>> | undefined
+		const typeString = (props?.['type']?.['enum'] as unknown[] | undefined)?.find(
+			(t): t is string => typeof t === 'string',
+		)
+		const settingsDefName = (props?.['settings']?.['$ref'] as string | undefined)?.split('/').pop()
+		if (typeString && settingsDefName) derived[settingsDefName] = typeString
+	}
+	return { ...derived, ...DEFINITION_TO_DEVICE }
+}
+
 function buildKeysetControlDefs(refSchemas: Record<string, Record<string, unknown>>): ControlDef[] {
 	const getSchema = refSchemas['response_schemas/keysets_get_2.schema.json']
 	const putSchema = refSchemas['request_schemas/keysets_put_update_2.schema.json']
@@ -313,9 +334,10 @@ function buildKeysetControlDefs(refSchemas: Record<string, Record<string, unknow
 	const getDefs = (getSchema.definitions ?? putSchema.definitions) as Record<string, Record<string, unknown>>
 	const putDefs = (putSchema.definitions ?? {}) as Record<string, Record<string, unknown>>
 
+	const effectiveDefToDevice = deriveDefinitionToDevice(putSchema, putDefs)
 	const defs: ControlDef[] = []
 
-	for (const [defName, deviceType] of Object.entries(DEFINITION_TO_DEVICE)) {
+	for (const [defName, deviceType] of Object.entries(effectiveDefToDevice)) {
 		const sourceDefName = V_SERIES_VARIANTS.has(defName) ? V_SERIES_BASE : defName
 
 		const putDef = putDefs[sourceDefName] ?? putDefs[defName]
@@ -382,6 +404,23 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 	const definitions = putSchema['definitions'] as Record<string, Record<string, unknown>> | undefined
 	if (!definitions) return {}
 
+	const bulkPutAccepted = new Set<string>()
+	const container = (putSchema['additionalProperties'] ?? putSchema) as Record<string, unknown>
+	for (const entry of (container['oneOf'] as Array<Record<string, unknown>>) ?? []) {
+		const ref = entry['$ref'] as string | undefined
+		if (!ref) continue
+		const defName = ref.split('/').pop() ?? ''
+		const roleDef = definitions[defName]
+		if (!roleDef) continue
+		const typeEnum = (roleDef['properties'] as Record<string, Record<string, unknown>> | undefined)?.['type']?.[
+			'enum'
+		] as unknown[] | undefined
+		for (const t of typeEnum ?? []) if (typeof t === 'string') bulkPutAccepted.add(t)
+	}
+	const bulkPutKnown = bulkPutAccepted.size > 0
+
+	const effectiveDefToDevice = deriveDefinitionToDevice(putSchema, definitions)
+
 	const getKeysetsItemProps = (defName: string): Record<string, Record<string, unknown>> => {
 		const source = V_SERIES_VARIANTS.has(defName) ? V_SERIES_BASE : defName
 		const def = definitions[source]
@@ -393,7 +432,7 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 
 	const result: Record<string, KeyAssignCapabilities> = {}
 
-	for (const [defName, deviceType] of Object.entries(DEFINITION_TO_DEVICE)) {
+	for (const [defName, deviceType] of Object.entries(effectiveDefToDevice)) {
 		const def = definitions[defName]
 		if (!def) continue
 
@@ -407,12 +446,16 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 		}
 
 		const itemProps = getKeysetsItemProps(defName)
+		const supportsCallKey = 'isCallKey' in itemProps
 
 		const slotFields: KeySlotField[] = []
 		for (const [key, prop] of Object.entries(itemProps)) {
 			if (SKIP_KEY_SLOT_FIELDS.has(key)) continue
-			const valueType = parseProperty(prop)
+			let valueType = parseProperty(prop)
 			if (!valueType) continue
+			if (key === 'interlockGroup' && valueType.kind === 'integer' && valueType.min === 0 && valueType.max === 1) {
+				valueType = { kind: 'number-enum', values: [0, 1], labels: ['None', 'Group 1'] }
+			}
 			const firstValue =
 				valueType.kind === 'string-enum'
 					? valueType.values[0]
@@ -432,7 +475,9 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 		}
 
 		if (slotFields.length === 0) continue
-		result[deviceType] = { keyCount, slotFields }
+		const keysetTypes = DEVICE_TYPE_TO_KEYSET_TYPE[deviceType] ?? [deviceType]
+		const supportsBulkPut = !bulkPutKnown || keysetTypes.some((kt) => bulkPutAccepted.has(kt))
+		result[deviceType] = { keyCount, slotFields, supportsCallKey, supportsBulkPut }
 	}
 
 	return result

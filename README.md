@@ -4,6 +4,13 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
+### 0.4.2
+
+- Fix for HKB-2X key setting action not working
+- Fix to allow multiple key settings in one button
+- Change interlock group option from 0/1 to enable/disable
+- General cleanup
+
 #### 0.4.1
 
 - Fixups for submission to companion
