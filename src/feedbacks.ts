@@ -1,14 +1,15 @@
 import {
 	CompanionAdvancedFeedbackDefinition,
+	CompanionBooleanFeedbackDefinition,
+	CompanionFeedbackDefinitions,
 	CompanionFeedbackButtonStyleResult,
+	CompanionOptionValues,
 	JsonValue,
 } from '@companion-module/base'
 import ModuleInstance from './main.js'
 import { getField, roleChoices, endpointChoices, portChoices, findKeysetIdForRole } from './arcadia.js'
 import { ControlDef, DeviceRecord } from './types.js'
 import { drawMeter, MeterStyle } from './indicators.js'
-
-// ─── Trigger helpers ──────────────────────────────────────────────────────────
 
 function subscribe(instance: ModuleInstance, feedbackId: string, store: string): void {
 	instance.feedbackTriggers.set(feedbackId, store as import('./types.js').FeedbackStore)
@@ -20,15 +21,12 @@ function unsubscribeFn(instance: ModuleInstance) {
 	}
 }
 
-// ─── Navigate roleset → keyset ────────────────────────────────────────────────
-
 function getKeysetForRole(instance: ModuleInstance, roleId: number, deviceType?: string): DeviceRecord | null {
 	if (!deviceType) return null
 	const keysetId = findKeysetIdForRole(instance, roleId, deviceType)
 	return keysetId !== undefined ? (instance.keysets.get(keysetId) ?? null) : null
 }
 
-// Get the endpointStatus for a role (via association.dpId)
 function getStatusForRole(instance: ModuleInstance, roleId: number): DeviceRecord | null {
 	for (const [, status] of instance.endpointStatus) {
 		const assoc = status['association'] as DeviceRecord | undefined
@@ -37,9 +35,19 @@ function getStatusForRole(instance: ModuleInstance, roleId: number): DeviceRecor
 	return null
 }
 
-// ─── Schema-driven feedbacks ──────────────────────────────────────────────────
+interface CompanionValueFeedbackDefinition {
+	type: 'value'
+	name: string
+	description?: string
+	options: Record<string, unknown>[]
+	callback: (feedback: { feedbackId: string; options: CompanionOptionValues }) => JsonValue
+	unsubscribe?: (feedback: { feedbackId: string }) => void
+}
 
-type FeedbackDef = Record<string, unknown>
+type FeedbackDef =
+	| CompanionBooleanFeedbackDefinition
+	| CompanionAdvancedFeedbackDefinition
+	| CompanionValueFeedbackDefinition
 
 function buildDefsFor(
 	instance: ModuleInstance,
@@ -52,15 +60,21 @@ function buildDefsFor(
 
 	const isPort = def.scope === 'port'
 	const isEndpoint = def.scope === 'endpoint'
-	const isKeyset = def.read.store === ('keysets' as string)
+	const isKeyset = def.read.store === 'keysets'
 	const isLiveStatus = def.read.store === 'endpointStatus'
 	const store = def.read.store
 
 	const subjectOption = isPort
-		? { type: 'dropdown', id: 'subjectId', label: 'Port', default: pChoices[0]?.id, choices: pChoices }
+		? ({ type: 'dropdown', id: 'subjectId', label: 'Port', default: pChoices[0]?.id, choices: pChoices } as const)
 		: isEndpoint
-			? { type: 'dropdown', id: 'subjectId', label: 'Endpoint', default: epChoices[0]?.id, choices: epChoices }
-			: { type: 'dropdown', id: 'subjectId', label: 'Role', default: rChoices[0]?.id, choices: rChoices }
+			? ({
+					type: 'dropdown',
+					id: 'subjectId',
+					label: 'Endpoint',
+					default: epChoices[0]?.id,
+					choices: epChoices,
+				} as const)
+			: ({ type: 'dropdown', id: 'subjectId', label: 'Role', default: rChoices[0]?.id, choices: rChoices } as const)
 
 	const typePrefix = def.deviceTypes.length === 1 ? `[${def.deviceTypes[0]}] ` : ''
 	const scopePrefix = isPort
@@ -87,7 +101,6 @@ function buildDefsFor(
 		}
 		if (isKeyset) {
 			const deviceType = def.deviceTypes[0]
-			// If no specific device type, scan all to find the keyset for this role
 			const keyset = deviceType
 				? getKeysetForRole(instance, subjectId, deviceType)
 				: Object.keys(instance.keyAssignCapabilities).reduce<DeviceRecord | null>(
@@ -100,7 +113,6 @@ function buildDefsFor(
 			const record = instance.endpoints.get(subjectId)
 			return record ? getField(record, def.read!.field) : null
 		}
-		// rolesets
 		const record = instance.rolesets.get(subjectId)
 		return record ? getField(record, def.read!.field) : null
 	}
@@ -116,7 +128,6 @@ function buildDefsFor(
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, store)
 				const val = getValue(Number(feedback.options['subjectId']))
-				// status field: 'online' string → boolean
 				return val === true || val === 'online'
 			},
 		}
@@ -148,7 +159,6 @@ function buildDefsFeedbacks(instance: ModuleInstance): Record<string, FeedbackDe
 		if (def.deviceTypes.length > 0 && selectedTypes.length > 0) {
 			if (!def.deviceTypes.some((dt) => selectedTypes.includes(dt))) continue
 		}
-
 		const fb = buildDefsFor(instance, def, rChoices, epChoices, pChoices)
 		if (fb) feedbacks[def.id.replace(/\./g, '_')] = fb
 	}
@@ -156,35 +166,32 @@ function buildDefsFeedbacks(instance: ModuleInstance): Record<string, FeedbackDe
 	return feedbacks
 }
 
-// ─── Manual feedbacks ─────────────────────────────────────────────────────────
-
 function buildManualFeedbacks(instance: ModuleInstance): Record<string, FeedbackDef> {
 	const rChoices = roleChoices(instance)
 	const epChoices = endpointChoices(instance)
 
 	const roleOption = {
-		type: 'dropdown',
+		type: 'dropdown' as const,
 		id: 'roleId',
 		label: 'Role',
 		default: rChoices[0]?.id,
 		choices: rChoices,
 	}
 	const epOption = {
-		type: 'dropdown',
+		type: 'dropdown' as const,
 		id: 'endpointId',
 		label: 'Beltpack',
 		default: epChoices[0]?.id,
 		choices: epChoices,
 	}
 
-	// Key count across all configured device types
 	const selectedTypes = instance.config.endpointTypes ?? []
 	const filteredCaps = Object.entries(instance.keyAssignCapabilities).filter(
 		([dt]) => selectedTypes.length === 0 || selectedTypes.includes(dt),
 	)
 	const maxKeys = Math.max(1, ...filteredCaps.map(([, c]) => c.keyCount))
 	const keyChoices = Array.from({ length: maxKeys }, (_, i) => ({ id: String(i), label: `Key ${i + 1}` }))
-	const keyOption = { type: 'dropdown', id: 'keyIndex', label: 'Key', default: '0', choices: keyChoices }
+	const keyOption = { type: 'dropdown' as const, id: 'keyIndex', label: 'Key', default: '0', choices: keyChoices }
 
 	const getKeyState = (roleId: number, keyIndex: string) => {
 		const status = getStatusForRole(instance, roleId)
@@ -192,8 +199,6 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 	}
 
 	const getKeyAssign = (roleId: number, keyIndex: number): string => {
-		// Navigate rolesets → sessions → defaultRole → keyset.
-		// Try all known device types until we find a keyset for this role.
 		let keyset: DeviceRecord | null = null
 		for (const deviceType of Object.keys(instance.keyAssignCapabilities)) {
 			const ks = getKeysetForRole(instance, roleId, deviceType)
@@ -222,7 +227,6 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 	}
 
 	const feedbacks: Record<string, FeedbackDef> = {
-		// ── Key state ────────────────────────────────────────────────────────
 		key_state: {
 			type: 'value',
 			name: '[Key] State',
@@ -254,12 +258,10 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			unsubscribe: unsubscribeFn(instance),
 			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
 				subscribe(instance, feedback.feedbackId, 'keysets')
-				return (getKeyAssign(Number(feedback.options['roleId']), Number(feedback.options['keyIndex'])) ||
-					false) as JsonValue
+				return getKeyAssign(Number(feedback.options['roleId']), Number(feedback.options['keyIndex'])) || false
 			},
 		},
 
-		// ── Role assigned endpoint ────────────────────────────────────────────
 		role_endpoint: {
 			type: 'value',
 			name: '[Role] Assigned Endpoint ID',
@@ -271,13 +273,12 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 				const roleId = Number(feedback.options['roleId'])
 				for (const [epId, status] of instance.endpointStatus) {
 					const dpId = (status['association'] as DeviceRecord | undefined)?.['dpId'] as number | undefined
-					if (dpId === roleId) return epId as JsonValue
+					if (dpId === roleId) return epId
 				}
 				return false
 			},
 		},
 
-		// ── Beltpack assigned role ────────────────────────────────────────────
 		beltpack_role: {
 			type: 'value',
 			name: '[Beltpack] Assigned Role',
@@ -287,18 +288,17 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 				subscribe(instance, feedback.feedbackId, 'endpointStatus')
 				const status = instance.endpointStatus.get(Number(feedback.options['endpointId']))
 				const dpId = (status?.['association'] as DeviceRecord | undefined)?.['dpId'] as number | undefined
-				return (dpId ?? false) as JsonValue
+				return dpId ?? false
 			},
 		},
 
-		// ── Gateway (antenna) ─────────────────────────────────────────────────
 		gateway_online: {
 			type: 'boolean',
 			name: '[Antenna] Online',
 			defaultStyle: { bgcolor: 0x00ff00, color: 0x000000 } satisfies Partial<CompanionFeedbackButtonStyleResult>,
 			options: [
 				{
-					type: 'dropdown',
+					type: 'dropdown' as const,
 					id: 'endpointId',
 					label: 'Antenna',
 					default: [...instance.gateways.keys()][0]?.toString(),
@@ -319,7 +319,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			name: '[Antenna] Status',
 			options: [
 				{
-					type: 'dropdown',
+					type: 'dropdown' as const,
 					id: 'endpointId',
 					label: 'Antenna',
 					default: [...instance.gateways.keys()][0]?.toString(),
@@ -334,7 +334,6 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			},
 		},
 
-		// ── Call From (who is calling) ────────────────────────────────────────
 		call_from: {
 			type: 'value',
 			name: 'Call From',
@@ -355,7 +354,6 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			},
 		},
 
-		// ── Call To (which beltpack has an active inbound call) ───────────────
 		call_to: {
 			type: 'value',
 			name: 'Call To',
@@ -367,14 +365,13 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 				for (const [epId, status] of instance.endpointStatus) {
 					if (status['callState'] === true) {
 						const ep = instance.endpoints.get(epId)
-						return ((ep?.['label'] as string | undefined) ?? String(epId)) as JsonValue
+						return (ep?.['label'] as string | undefined) ?? String(epId)
 					}
 				}
 				return false
 			},
 		},
 
-		// ── Calling (boolean) ─────────────────────────────────────────────────
 		call_on_connection: {
 			type: 'boolean',
 			name: 'Calling',
@@ -382,7 +379,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			defaultStyle: { bgcolor: 0xff0000, color: 0xffffff },
 			options: [
 				{
-					type: 'dropdown',
+					type: 'dropdown' as const,
 					id: 'connectionId',
 					label: 'Connection',
 					default: [...instance.connections.keys()][0]?.toString(),
@@ -403,7 +400,6 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			},
 		},
 
-		// ── 2W Nulling status ─────────────────────────────────────────────────
 		...([...instance.ports.values()].some((p) => p['port_config_type'] === '2W')
 			? {
 					port_2w_nulling_status: {
@@ -411,7 +407,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 						name: '[2W] Nulling Status',
 						options: [
 							{
-								type: 'dropdown',
+								type: 'dropdown' as const,
 								id: 'portId',
 								label: 'Port',
 								default: portChoices(instance).find((p) => {
@@ -433,7 +429,6 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 				}
 			: {}),
 
-		// ── GPI triggered ────────────────────────────────────────────────────
 		gpi_triggered: {
 			type: 'boolean',
 			name: '[NEP] GPI Triggered',
@@ -441,7 +436,7 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 			defaultStyle: { bgcolor: 0xff8800, color: 0x000000 },
 			options: [
 				{
-					type: 'dropdown',
+					type: 'dropdown' as const,
 					id: 'gpiId',
 					label: 'GPI',
 					default: '0',
@@ -461,8 +456,6 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 
 	return feedbacks
 }
-
-// ─── Meter feedback ───────────────────────────────────────────────────────────
 
 function buildMeterFeedback(): Record<string, CompanionAdvancedFeedbackDefinition> {
 	return {
@@ -526,12 +519,10 @@ function buildMeterFeedback(): Record<string, CompanionAdvancedFeedbackDefinitio
 	}
 }
 
-// ─── Public entry point ───────────────────────────────────────────────────────
-
 export function UpdateFeedbacks(instance: ModuleInstance): void {
 	instance.setFeedbackDefinitions({
 		...buildDefsFeedbacks(instance),
 		...buildManualFeedbacks(instance),
 		...buildMeterFeedback(),
-	} as unknown as Parameters<typeof instance.setFeedbackDefinitions>[0])
+	} as CompanionFeedbackDefinitions)
 }

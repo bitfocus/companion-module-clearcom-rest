@@ -1,7 +1,5 @@
 import { Regex, type SomeCompanionConfigField, type JsonObject } from '@companion-module/base'
 
-// ─── Endpoint type choices ────────────────────────────────────────────────────
-
 export const ENDPOINT_TYPES = [
 	'HMS-4X',
 	'HRM-4X',
@@ -15,14 +13,10 @@ export const ENDPOINT_TYPES = [
 	'V-Series-32',
 ] as const
 
-// ─── Schema cache ─────────────────────────────────────────────────────────────
-
 export interface CachedSchema extends JsonObject {
 	version: string
 	data: JsonObject
 }
-
-// ─── Per-device schema path blacklists ───────────────────────────────────────
 
 const SHARED_BLACKLIST = [
 	'/1/certificate',
@@ -72,8 +66,6 @@ export function filterSchema(schema: Record<string, unknown>, deviceType: string
 	return { ...schema, paths: filteredPaths }
 }
 
-// ─── Config & secrets types ───────────────────────────────────────────────────
-
 export interface ModuleConfig extends JsonObject {
 	host: string
 	endpointTypes: string[]
@@ -85,8 +77,6 @@ export interface ModuleConfig extends JsonObject {
 export interface ModuleSecrets extends JsonObject {
 	password: string
 }
-
-// ─── Field definitions ────────────────────────────────────────────────────────
 
 export function GetConfigFields(): SomeCompanionConfigField[] {
 	return [

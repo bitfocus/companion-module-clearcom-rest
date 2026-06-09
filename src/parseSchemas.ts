@@ -5,11 +5,6 @@ import { makeLogger } from './logger.js'
 
 const log = makeLogger('parseSchemas', () => undefined)
 
-// ─── Device type mapping ──────────────────────────────────────────────────────
-// Maps schema definition names to the device type strings the Arcadia uses.
-// These are stable identifiers from the schema — if new device types are added
-// in firmware, new entries appear in the definitions and map here.
-
 const DEFINITION_TO_DEVICE: Record<string, string> = {
 	HMS4XSettings: 'HMS-4X',
 	HRM4XSettings: 'HRM-4X',
@@ -24,8 +19,6 @@ const DEFINITION_TO_DEVICE: Record<string, string> = {
 	VSeriesPanel12DKeySettings: 'V-Series-12D',
 }
 
-// Maps deviceType → the 'type' string used in /api/2/keysets responses.
-// Derived from observed device data — the schema does not expose these strings.
 export const DEVICE_TYPE_TO_KEYSET_TYPE: Record<string, string[]> = {
 	'HMS-4X': ['HMS-4X'],
 	'HRM-4X': ['HRM-4X'],
@@ -40,8 +33,6 @@ export const DEVICE_TYPE_TO_KEYSET_TYPE: Record<string, string[]> = {
 	'V-Series-32': ['V32', 'V32D'],
 }
 
-// Key counts per V-Series variant — the schema base definition reports maxItems=32
-// for all variants, so we override per variant based on hardware key counts.
 const V_SERIES_KEY_COUNT: Record<string, number> = {
 	'V-Series-12': 12,
 	'V-Series-12D': 12,
@@ -49,7 +40,6 @@ const V_SERIES_KEY_COUNT: Record<string, number> = {
 	'V-Series-32': 32,
 }
 
-// V-Series variants inherit capabilities from the base definition
 const V_SERIES_VARIANTS = new Set([
 	'VSeriesPanel12KeySettings',
 	'VSeriesPanel24KeySettings',
@@ -58,19 +48,8 @@ const V_SERIES_VARIANTS = new Set([
 ])
 const V_SERIES_BASE = 'VSeriesPanelSettingsBase'
 
-// ─── Fields to skip ───────────────────────────────────────────────────────────
-// Complex objects/arrays that can't be represented as simple value controls,
-// or internal structural fields not useful as Companion actions/feedbacks.
-
-// ─── Per-type gain overrides ──────────────────────────────────────────────────
-// The schema reports a single gain range for all port types, but the device
-// enforces different ranges per port type. These corrections are sourced from
-// Clear-Com hardware documentation, not the schema.
-
 const GAIN_OVERRIDE_2W: SettingValueType = { kind: 'number-enum', values: [-3, -2, -1, 0, 1, 2, 3] }
 const GAIN_KEYS = new Set(['inputGain', 'outputGain'])
-
-// ─── Utility ──────────────────────────────────────────────────────────────────
 
 function toLabel(key: string): string {
 	return key
@@ -94,7 +73,6 @@ function parseProperty(prop: Record<string, unknown>): SettingValueType | null {
 		if (enumVals) {
 			const nums = (enumVals as (number | null)[]).filter((v): v is number => v !== null).sort((a, b) => a - b)
 			const enumNames = (prop['x-enumNames'] as string[] | undefined) ?? (prop['enumNames'] as string[] | undefined)
-			// Align labels to the filtered+sorted nums if present
 			let labels: string[] | undefined
 			if (enumNames) {
 				const paired = (enumVals as (number | null)[])
@@ -106,7 +84,6 @@ function parseProperty(prop: Record<string, unknown>): SettingValueType | null {
 			return { kind: 'number-enum', values: nums, labels }
 		}
 		if ('minimum' in prop && 'maximum' in prop) {
-			// JSON Schema integers without multipleOf have an implicit step of 1
 			const step = (prop.multipleOf as number | undefined) ?? 1
 			return {
 				kind: 'integer',
@@ -115,16 +92,11 @@ function parseProperty(prop: Record<string, unknown>): SettingValueType | null {
 				step,
 			}
 		}
-		// No constraints — not representable as a control, skip
 		return null
 	}
 
 	return null
 }
-
-// ─── Port ControlDefs ─────────────────────────────────────────────────────────
-// Cross-references port_get.schema.json (port_settings.*) with
-// ports_put_update.schema.json (top-level keys) to find read+write fields.
 
 function buildPortControlDefs(refSchemas: Record<string, Record<string, unknown>>): ControlDef[] {
 	const getSchema = refSchemas['response_schemas/port_get.schema.json']
@@ -142,7 +114,6 @@ function buildPortControlDefs(refSchemas: Record<string, Record<string, unknown>
 
 	for (const [key, prop] of Object.entries(getProps)) {
 		if (SKIP_PORT_SETTINGS.has(key)) continue
-		// Must be writable too (present in PUT schema)
 		if (!(key in putProps)) continue
 
 		const valueType = parseProperty(prop)
@@ -154,7 +125,7 @@ function buildPortControlDefs(refSchemas: Record<string, Record<string, unknown>
 			id: `port.${key}`,
 			label: toLabel(key),
 			scope: 'port',
-			deviceTypes: [], // applies to all port types
+			deviceTypes: [],
 			read: {
 				store: 'ports',
 				field: `port_settings.${key}`,
@@ -172,7 +143,6 @@ function buildPortControlDefs(refSchemas: Record<string, Record<string, unknown>
 		})
 	}
 
-	// Port label — readable from top-level port_label, writable via label key in PUT
 	const labelInPut = putProps['label']
 	if (labelInPut) {
 		defs.push({
@@ -199,10 +169,6 @@ function buildPortControlDefs(refSchemas: Record<string, Record<string, unknown>
 	return defs
 }
 
-// ─── Endpoint ControlDefs ─────────────────────────────────────────────────────
-// Label: readable + writable.
-// LiveStatus fields: read-only feedbacks only.
-
 function buildEndpointControlDefs(refSchemas: Record<string, Record<string, unknown>>): ControlDef[] {
 	const getSchema = refSchemas['response_schemas/endpoint_get.schema.json']
 	const putSchema = refSchemas['request_schemas/endpoints_put_update.schema.json']
@@ -210,7 +176,6 @@ function buildEndpointControlDefs(refSchemas: Record<string, Record<string, unkn
 
 	const defs: ControlDef[] = []
 
-	// Label — read from endpoint, write via PUT
 	const hasPutLabel = putSchema && 'label' in ((putSchema.properties as Record<string, unknown>) ?? {})
 
 	defs.push({
@@ -235,7 +200,6 @@ function buildEndpointControlDefs(refSchemas: Record<string, Record<string, unkn
 		supportsIncDec: false,
 	})
 
-	// LiveStatus fields — read-only
 	const liveStatusProps =
 		((getSchema.properties as Record<string, Record<string, unknown>>)?.liveStatus?.properties as Record<
 			string,
@@ -245,7 +209,6 @@ function buildEndpointControlDefs(refSchemas: Record<string, Record<string, unkn
 	for (const [key, prop] of Object.entries(liveStatusProps)) {
 		if (SKIP_LIVE_STATUS.has(key)) continue
 
-		// Handle nested objects (e.g. longevity.hours, longevity.minutes)
 		if (prop.type === 'object' && prop.properties) {
 			const subProps = prop.properties as Record<string, Record<string, unknown>>
 			for (const subKey of Object.keys(subProps)) {
@@ -260,18 +223,14 @@ function buildEndpointControlDefs(refSchemas: Record<string, Record<string, unkn
 						fetchFn: 'fetchEndpoints',
 					},
 					write: null,
-					valueType: { kind: 'string' }, // subfield type not specified in schema
+					valueType: { kind: 'string' },
 					supportsIncDec: false,
 				})
 			}
 			continue
 		}
 
-		// For read-only liveStatus fields, fall back to string display if no
-		// constraints are defined — unconstrained integers are still displayable.
 		const valueType = parseProperty(prop) ?? { kind: 'string' as const }
-
-		// status field becomes a boolean 'online' check
 		const finalValueType: SettingValueType = key === 'status' ? { kind: 'boolean' } : valueType
 
 		defs.push({
@@ -293,10 +252,6 @@ function buildEndpointControlDefs(refSchemas: Record<string, Record<string, unkn
 	return defs
 }
 
-// ─── Role ControlDefs ─────────────────────────────────────────────────────────
-// Name/label from roleset_get + rosesets_put_update.
-// Keyset settings per device type from keysets_get_2 + keysets_put_update_2.
-
 function buildRoleControlDefs(refSchemas: Record<string, Record<string, unknown>>): ControlDef[] {
 	const getSchema = refSchemas['response_schemas/roleset_get.schema.json']
 	const putSchema = refSchemas['request_schemas/rolesets_put_update.schema.json']
@@ -304,7 +259,6 @@ function buildRoleControlDefs(refSchemas: Record<string, Record<string, unknown>
 
 	const defs: ControlDef[] = []
 
-	// Role description — top-level field on the keyset (not nested in settings)
 	defs.push({
 		id: 'role.description',
 		label: 'Description',
@@ -326,7 +280,6 @@ function buildRoleControlDefs(refSchemas: Record<string, Record<string, unknown>
 		supportsIncDec: false,
 	})
 
-	// Role label — 'label' is the display name, 'name' is the unique system identifier
 	defs.push({
 		id: 'role.label',
 		label: 'Label',
@@ -352,10 +305,6 @@ function buildRoleControlDefs(refSchemas: Record<string, Record<string, unknown>
 	return defs
 }
 
-// ─── Keyset (role settings) ControlDefs ───────────────────────────────────────
-// Per-device-type settings stored in the keyset, accessed via /api/2/keysets.
-// Cross-references keysets_get_2 (readable) with keysets_put_update_2 (writable).
-
 function buildKeysetControlDefs(refSchemas: Record<string, Record<string, unknown>>): ControlDef[] {
 	const getSchema = refSchemas['response_schemas/keysets_get_2.schema.json']
 	const putSchema = refSchemas['request_schemas/keysets_put_update_2.schema.json']
@@ -367,11 +316,8 @@ function buildKeysetControlDefs(refSchemas: Record<string, Record<string, unknow
 	const defs: ControlDef[] = []
 
 	for (const [defName, deviceType] of Object.entries(DEFINITION_TO_DEVICE)) {
-		// V-Series variants inherit settings from base
 		const sourceDefName = V_SERIES_VARIANTS.has(defName) ? V_SERIES_BASE : defName
 
-		// PUT schema is authoritative for value types — it defines accepted values.
-		// GET schema is only consulted to confirm a field is readable.
 		const putDef = putDefs[sourceDefName] ?? putDefs[defName]
 		const getDef = getDefs[sourceDefName] ?? putDef
 		if (!putDef) continue
@@ -381,7 +327,6 @@ function buildKeysetControlDefs(refSchemas: Record<string, Record<string, unknow
 
 		for (const [key, prop] of Object.entries(putProps)) {
 			if (SKIP_KEYSET_SETTINGS.has(key)) continue
-			// Must also be readable (present in GET schema)
 			if (!(key in getProps)) continue
 
 			const valueType = parseProperty(prop)
@@ -412,8 +357,6 @@ function buildKeysetControlDefs(refSchemas: Record<string, Record<string, unknow
 	return defs
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
 export function buildControlDefs(loadedSchemas: LoadedSchemas): ControlDef[] {
 	const refs = loadedSchemas.refSchemas as unknown as Record<string, Record<string, unknown>>
 
@@ -427,12 +370,6 @@ export function buildControlDefs(loadedSchemas: LoadedSchemas): ControlDef[] {
 
 export type { ControlDef }
 
-// ─── Key assign capabilities ──────────────────────────────────────────────────
-// Parses keysets_put_update_2.schema.json to extract per-device-type key counts,
-// activation states, and talk button modes. Used by actions.ts to build
-// the assign key action options.
-
-// Fields that are structural/internal and should not become user-facing slot controls
 const SKIP_KEY_SLOT_FIELDS = new Set(['keysetIndex', 'entities', 'isCallKey', 'isReplyKey', 'isPgm', 'colorIndex'])
 
 export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record<string, KeyAssignCapabilities> {
@@ -471,7 +408,6 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 
 		const itemProps = getKeysetsItemProps(defName)
 
-		// Dynamically build slotFields from all non-structural item properties
 		const slotFields: KeySlotField[] = []
 		for (const [key, prop] of Object.entries(itemProps)) {
 			if (SKIP_KEY_SLOT_FIELDS.has(key)) continue
@@ -501,11 +437,6 @@ export function parseKeyAssignCapabilities(loadedSchemas: LoadedSchemas): Record
 
 	return result
 }
-
-// ─── GPI capabilities ─────────────────────────────────────────────────────────
-// Returns true if the loaded schemas include GPI event schemas, indicating
-// this firmware supports GPI. The actual GPI count is fetched at runtime
-// from the device's interface capability endpoints.
 
 export function parseGpiCapabilities(loadedSchemas: LoadedSchemas): boolean {
 	return 'request_schemas/gpi_events_post_add.schema.json' in (loadedSchemas.refSchemas as Record<string, unknown>)

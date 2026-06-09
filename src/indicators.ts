@@ -1,12 +1,10 @@
 import type { CompanionAdvancedFeedbackResult } from '@companion-module/base'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export type MeterStyle = 'bar-horizontal' | 'bar-vertical' | 'circle'
 
 export interface MeterOptions {
 	style: MeterStyle
-	thickness: number // pixels
+	thickness: number
 	min: number
 	max: number
 	yellowStart: number
@@ -19,14 +17,10 @@ export interface MeterOptions {
 	height?: number
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const W = 72
 const H = 72
 const MARGIN = 4
 
-// Arc: 7 o'clock (120°) clockwise 300° to 5 o'clock (60°)
-// Angles in screen coords: 0° = right, clockwise positive
 const ARC_START = 120
 const ARC_SWEEP = 300
 
@@ -34,8 +28,6 @@ const BORDER: [number, number, number, number] = [0x80, 0x80, 0x80, 0x80]
 const GREEN: [number, number, number, number] = [0x00, 0xcc, 0x00, 0xff]
 const YELLOW: [number, number, number, number] = [0xff, 0xcc, 0x00, 0xff]
 const RED: [number, number, number, number] = [0xff, 0x22, 0x00, 0xff]
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function setPixel(buf: Buffer, x: number, y: number, c: [number, number, number, number], w: number, h: number): void {
 	if (x < 0 || x >= w || y < 0 || y >= h) return
@@ -56,7 +48,6 @@ function trackColor(
 	value: number,
 ): [number, number, number, number] | null {
 	if (yellowStart > redStart) {
-		// Reversed mode: transparent unfilled, single color based on current value
 		if (posRatio > filledRatio) return null
 		if (value > yellowStart) return GREEN
 		if (value > redStart) return YELLOW
@@ -69,13 +60,10 @@ function trackColor(
 	return RED
 }
 
-// ─── Bar ─────────────────────────────────────────────────────────────────────
-
 function drawBar(buf: Buffer, vertical: boolean, opts: MeterOptions, filledRatio: number, w: number, h: number): void {
 	const half = Math.floor(opts.thickness / 2)
 
 	if (!vertical) {
-		// Left → right
 		const cy = Math.floor(h / 2)
 		const trackLen = w - MARGIN * 2
 		const y0 = cy - half
@@ -89,7 +77,6 @@ function drawBar(buf: Buffer, vertical: boolean, opts: MeterOptions, filledRatio
 			}
 		}
 	} else {
-		// Bottom → top
 		const cx = Math.floor(w / 2)
 		const trackLen = h - MARGIN * 2
 		const x0 = cx - half
@@ -105,15 +92,12 @@ function drawBar(buf: Buffer, vertical: boolean, opts: MeterOptions, filledRatio
 	}
 }
 
-// ─── Arc ─────────────────────────────────────────────────────────────────────
-
 function drawArc(buf: Buffer, opts: MeterOptions, filledRatio: number, w: number, h: number): void {
 	const cx = Math.floor(w / 2)
 	const cy = Math.floor(h / 2)
 	const outerR = cx - MARGIN
 	const innerR = Math.max(1, outerR - opts.thickness)
 
-	// Expand scan region by 1px for AA fringe
 	for (let y = 0; y < h; y++) {
 		for (let x = 0; x < w; x++) {
 			const dx = x - cx
@@ -121,15 +105,12 @@ function drawArc(buf: Buffer, opts: MeterOptions, filledRatio: number, w: number
 			const dist = Math.sqrt(dx * dx + dy * dy)
 			if (dist < innerR - 1 || dist > outerR + 1) continue
 
-			// atan2 in screen coords: 0°=right, clockwise positive
 			let angle = Math.atan2(dy, dx) * (180 / Math.PI)
 			if (angle < 0) angle += 360
 
-			// Normalize relative to arc start
 			const norm = (angle - ARC_START + 360) % 360
 			if (norm > ARC_SWEEP) continue
 
-			// Anti-alias: compute coverage based on distance from ideal edges
 			const outerAlpha = Math.max(0, Math.min(1, outerR + 0.5 - dist))
 			const innerAlpha = Math.max(0, Math.min(1, dist - innerR + 0.5))
 			const alpha = Math.min(outerAlpha, innerAlpha)
@@ -143,7 +124,6 @@ function drawArc(buf: Buffer, opts: MeterOptions, filledRatio: number, w: number
 		}
 	}
 
-	// Draw end caps explicitly: line from innerR to outerR at start and end angles
 	for (const angleDeg of [ARC_START, (ARC_START + ARC_SWEEP) % 360]) {
 		const rad = angleDeg * (Math.PI / 180)
 		const cos = Math.cos(rad)
@@ -156,8 +136,6 @@ function drawArc(buf: Buffer, opts: MeterOptions, filledRatio: number, w: number
 	}
 }
 
-// ─── Public API ──────────────────────────────────────────────────────────────
-
 export function drawMeter(
 	opts: MeterOptions,
 	imageWidth?: number,
@@ -165,7 +143,7 @@ export function drawMeter(
 ): CompanionAdvancedFeedbackResult {
 	const w = opts.width ?? imageWidth ?? W
 	const h = opts.height ?? imageHeight ?? H
-	const buf = Buffer.alloc(w * h * 4, 0) // transparent
+	const buf = Buffer.alloc(w * h * 4, 0)
 
 	const clamped = Math.max(opts.min, Math.min(opts.max, opts.value))
 	const filledRatio = (clamped - opts.min) / (opts.max - opts.min)

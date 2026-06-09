@@ -12,14 +12,10 @@ const SCHEMAS_BASE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'sc
 let _instance: ModuleInstance | null = null
 const log = makeLogger('loadSchemas', () => _instance?.config)
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export type LoadedSchemas = {
 	mainSchema: OpenAPIV3.Document
 	refSchemas: Record<string, OpenAPIV3.SchemaObject>
 }
-
-// ─── Schema loading (version-aware, config-cached, per-device filtered) ───────
 
 export async function loadSchemasAndRefs(
 	self: ModuleInstance,
@@ -28,17 +24,11 @@ export async function loadSchemasAndRefs(
 ): Promise<LoadedSchemas> {
 	_instance = self
 
-	// Device type is only known after fetchDevice — use 'unknown' as a fallback key
-	// until deviceInfo is populated. In practice, connect() fetches device info first.
 	const deviceType = (self.deviceInfo?.deviceType_name ?? 'unknown').toUpperCase()
-	// Prefer the full firmware version (versionSW) over the short device_versionSW,
-	// stripping any build suffix after the first space (e.g. "4.1.83.37-0 (Boot...)" → "4.1.83.37-0")
 	const rawVersion = self.deviceInfo?.versionSW ?? self.deviceInfo?.device_versionSW ?? 'unknown'
 	const firmwareVersion = rawVersion.split(' ')[0]
 	const cacheKey = `${deviceType}_${firmwareVersion}`
 	const cached = self.config.schemaCache?.[cacheKey]
-	// When the exact key isn't cached, fall back to any available entry so offline
-	// mode still works. The live fetch below will replace it when the device is reachable.
 	const fallback = cached ?? Object.values(self.config.schemaCache ?? {}).find(Boolean)
 
 	const apiUrl = `${deviceHost}/api/1/schemas/clearcom_api.json`
@@ -48,11 +38,9 @@ export async function loadSchemasAndRefs(
 	if (fallback) {
 		log.info(`Loaded cached schema for ${cacheKey}${fallback !== cached ? ' (fallback)' : ''}`)
 		mainSchema = fallback.data as unknown as OpenAPIV3.Document
-		// refs are embedded in the cached data under a 'refs' key
 		refSchemas = (fallback.data['refs'] as Record<string, OpenAPIV3.SchemaObject>) ?? {}
 	}
 
-	// Try to fetch live schema to check version
 	if (offlineOnly) {
 		if (!mainSchema) throw new Error('No cached schema available for offline mode')
 		return { mainSchema, refSchemas }
@@ -64,7 +52,6 @@ export async function loadSchemasAndRefs(
 			if (!cached) {
 				log.info(`No cached schema for ${cacheKey}, downloading from device`)
 
-				// Fetch all $refs
 				const refs = collectRefs(liveSchema)
 				const fetchedRefs: Record<string, OpenAPIV3.SchemaObject> = {}
 				for (const ref of refs) {
@@ -84,7 +71,6 @@ export async function loadSchemasAndRefs(
 					}
 				}
 
-				// Filter schema paths for this device type, embed refs, then cache
 				const filtered = filterSchema(liveSchema as unknown as Record<string, unknown>, deviceType)
 				filtered['refs'] = fetchedRefs
 
@@ -97,7 +83,6 @@ export async function loadSchemasAndRefs(
 				mainSchema = filtered as unknown as OpenAPIV3.Document
 				refSchemas = fetchedRefs
 
-				// Write to disk only when we've fetched a fresh schema — path is schemas/<cacheKey>/
 				void writeSchemasToDir(cacheKey, mainSchema, refSchemas)
 			} else {
 				log.info(`Schema already cached for ${cacheKey}, using cached`)
@@ -115,18 +100,10 @@ export async function loadSchemasAndRefs(
 	return { mainSchema: mainSchema!, refSchemas }
 }
 
-// ─── Schema cache clear ───────────────────────────────────────────────────────
-
-// Clears the in-memory schema cache so the next connect() re-fetches from the
-// device. Does NOT touch the disk — writeSchemasToDir always overwrites anyway.
-// Returns the updated config so the caller can do a single saveConfig call.
 export function clearSchemaCache(config: ModuleConfig): ModuleConfig {
 	return { ...config, schemaCache: {}, refreshSchema: false }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-// Write schemas to schemas/<cacheKey>/ on every fresh fetch — always overwrites.
 async function writeSchemasToDir(
 	cacheKey: string,
 	mainSchema: OpenAPIV3.Document,

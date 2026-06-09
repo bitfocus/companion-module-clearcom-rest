@@ -4,13 +4,8 @@ import { InstanceStatus } from '@companion-module/base'
 import ModuleInstance from './main.js'
 import { DeviceRecord, DeviceInfo, EndpointUpdatedEvent } from './types.js'
 
-// ─── Logger ───────────────────────────────────────────────────────────────────
-
 let _instance: ModuleInstance | null = null
 const log = makeLogger('network', () => _instance?.config)
-
-// ─── Request queue ────────────────────────────────────────────────────────────
-// All HTTP requests are serialised — the Arcadia rejects concurrent writes.
 
 let requestQueue: Promise<unknown> = Promise.resolve()
 
@@ -24,9 +19,6 @@ async function enqueue<T>(fn: () => Promise<T>): Promise<T> {
 	return result
 }
 
-// ─── HTTP ─────────────────────────────────────────────────────────────────────
-
-/** Thrown for non-2xx responses. Already logged by handleErrorResponse — callers should not re-log. */
 export class DeviceRequestError extends Error {
 	constructor(message: string) {
 		super(message)
@@ -42,7 +34,7 @@ async function handleErrorResponse(response: Response, method: string, url: stri
 		const body = (await response.json()) as Record<string, unknown>
 		detail = (body['message'] ?? body['error'] ?? body['msg']) as string | undefined
 	} catch {
-		// not JSON — ignore
+		/* body parse failure — use statusLine only */
 	}
 	log.debug(statusLine)
 	if (detail) log.error(detail)
@@ -65,10 +57,8 @@ async function executeRequest<R>(
 		const shortUrl = url.replace(/.*\/api/, '/api')
 		log.info(`→ ${method} ${shortUrl}`)
 		if (body !== undefined) log.debug(`  body: ${JSON.stringify(body)}`)
-		const abort = AbortSignal.timeout(8000)
 		const init: RequestInit = {
 			method,
-			signal: abort,
 			headers:
 				body !== undefined ? { ...buildHeaders(instance), 'Content-Type': 'application/json' } : buildHeaders(instance),
 		}
@@ -101,8 +91,6 @@ export async function putRequest<R>(url: string, instance: ModuleInstance, body:
 export async function deleteRequest<R = unknown>(url: string, instance: ModuleInstance): Promise<R> {
 	return executeRequest<R>('DELETE', url, instance)
 }
-
-// ─── Keepalive / token refresh ────────────────────────────────────────────────
 
 let keepaliveTimer: ReturnType<typeof setTimeout> | null = null
 const KEEPALIVE_MS = 30_000
@@ -147,7 +135,6 @@ async function refreshToken(instance: ModuleInstance): Promise<void> {
 		log.debug('Token refreshed')
 		resetKeepalive(instance)
 	} catch {
-		// Refresh failed — device may have rebooted. Re-login with credentials.
 		log.warn('Token refresh failed — attempting full re-login')
 		void reLogin(instance)
 	}
@@ -176,12 +163,6 @@ async function reLogin(instance: ModuleInstance): Promise<void> {
 	}
 }
 
-// ─── Fetch functions ──────────────────────────────────────────────────────────
-// Each fetch populates its store with DeviceRecord entries.
-// After updating, feedback checks are triggered where applicable.
-
-// Shared helper: fetch a list of DeviceRecords, optionally scoped to gids.
-// If clearFirst is true the store is cleared before populating (full refresh).
 async function fetchRecords(
 	instance: ModuleInstance,
 	url: string,
@@ -372,8 +353,6 @@ export async function fetchConnections(instance: ModuleInstance): Promise<void> 
 	}
 }
 
-// ─── Endpoint live status handler ─────────────────────────────────────────────
-
 function handleEndpointUpdated(instance: ModuleInstance, event: EndpointUpdatedEvent): void {
 	const { endpointId } = event
 	log.debug(`EndpointUpdated ${endpointId} [${event.path}]`)
@@ -423,8 +402,6 @@ function handleEndpointUpdated(instance: ModuleInstance, event: EndpointUpdatedE
 	}
 }
 
-// ─── Initial fetch ────────────────────────────────────────────────────────────
-
 async function fetchNullingStatus(instance: ModuleInstance): Promise<void> {
 	const twoPorts = [...instance.ports.values()].filter((p) => p['port_config_type'] === '2W')
 	for (const port of twoPorts) {
@@ -435,7 +412,7 @@ async function fetchNullingStatus(instance: ModuleInstance): Promise<void> {
 			)
 			instance.nullingStatus.set(port['port_id'] as number, result.nulling)
 		} catch {
-			// port may not support nulling — skip silently
+			/* nulling endpoint unavailable for this port — skip */
 		}
 	}
 	instance.triggerFeedbacksForStore('nulling')
@@ -467,14 +444,11 @@ async function initialFetch(instance: ModuleInstance, gen: number): Promise<void
 		if (instance.gpiCount > 0) {
 			instance.forceRebuild()
 		}
-
 		log.info('Initial fetch complete')
 	} catch (error) {
 		if (check()) log.error(`Initial fetch failed: ${String(error)}`)
 	}
 }
-
-// ─── Socket ───────────────────────────────────────────────────────────────────
 
 async function fetchAndRebuild(instance: ModuleInstance, fetch: Promise<void>): Promise<void> {
 	await fetch
@@ -545,12 +519,7 @@ export function connectSocket(instance: ModuleInstance): void {
 		log.debug('live:roles — refreshing keysets')
 		void fetchAndRebuild(
 			instance,
-			Promise.all([fetchKeysets(instance), fetchRolesets(instance)]).then(async () =>
-				// Re-fetch endpoints so endpointStatus.keyState (volumes, states) reflects
-				// the new assignment immediately — the Arcadia doesn't always push an
-				// EndpointUpdated event after a key assignment change.
-				fetchEndpoints(instance),
-			),
+			Promise.all([fetchKeysets(instance), fetchRolesets(instance)]).then(async () => fetchEndpoints(instance)),
 		)
 	})
 
@@ -597,8 +566,6 @@ export function connectSocket(instance: ModuleInstance): void {
 		let needsChoiceRebuild = false
 		for (const event of events) {
 			handleEndpointUpdated(instance, event)
-			// liveStatus events carry data inline — no fetch needed
-			// Other paths (settings, association changes) require a targeted refetch
 			if (!event.path.startsWith('liveStatus')) {
 				const ep = instance.endpoints.get(event.endpointId)
 				const gid = ep?.['gid'] as string | undefined
@@ -615,7 +582,6 @@ export function connectSocket(instance: ModuleInstance): void {
 		}
 	})
 
-	// Log all socket events at appropriate levels
 	const originalOnevent = (socket as unknown as { onevent: (packet: { data: unknown[] }) => void }).onevent.bind(socket)
 	;(socket as unknown as { onevent: (packet: { data: unknown[] }) => void }).onevent = (packet) => {
 		const [event, ...args] = packet.data
@@ -643,24 +609,18 @@ export function disconnectSocket(): void {
 	}
 }
 
-// ─── GPI fetch ────────────────────────────────────────────────────────────────
-// Fetches all GPIO records from the device, filters for type=0 (GPI),
-// and populates gpiIds, gpiCount, and gpiEvents from settings.events on each record.
-
 export async function fetchGpiCount(instance: ModuleInstance): Promise<void> {
 	try {
 		const response = await getRequest<Record<string, unknown>[]>(
 			`http://${instance.config.host}/api/1/devices/1/gpio`,
 			instance,
 		)
-		// type 0 = GPI, type 1 = GPO
 		const gpis = response.filter((g) => (g['type'] as number) === 0)
 		const ids = gpis.map((g) => g['id'] as number)
 
 		instance.gpiIds = ids
 		instance.gpiCount = ids.length
 
-		// Populate events from settings.events on each GPI record
 		instance.gpiEvents.clear()
 		for (const gpio of gpis) {
 			const id = gpio['id'] as number

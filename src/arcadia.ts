@@ -20,9 +20,6 @@ import {
 import { ControlDef, DeviceRecord } from './types.js'
 import { DEVICE_TYPE_TO_KEYSET_TYPE } from './parseSchemas.js'
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-// Resolve a dot-notation field path into a nested DeviceRecord
 export function getField(record: DeviceRecord, field: string): unknown {
 	const parts = field.split('.')
 	let current: unknown = record
@@ -33,8 +30,6 @@ export function getField(record: DeviceRecord, field: string): unknown {
 	return current
 }
 
-// Walk a roleset's sessions to find the keyset ID matching the given device type.
-// Returns undefined if no matching keyset is found.
 export function findKeysetIdForRole(instance: ModuleInstance, roleId: number, deviceType: string): number | undefined {
 	const keysetTypes = DEVICE_TYPE_TO_KEYSET_TYPE[deviceType]
 	if (!keysetTypes) {
@@ -55,7 +50,6 @@ export function findKeysetIdForRole(instance: ModuleInstance, roleId: number, de
 	return undefined
 }
 
-// Get the roleset currently assigned to an endpoint (via liveStatus.association.dpId)
 export function getRoleFromEndpoint(instance: ModuleInstance, endpointId: number): DeviceRecord | null {
 	_instance = instance
 	const status = instance.endpointStatus.get(endpointId)
@@ -66,7 +60,6 @@ export function getRoleFromEndpoint(instance: ModuleInstance, endpointId: number
 	return instance.rolesets.get(dpId) ?? null
 }
 
-// Build a choice label for an endpoint: "Label (ID)" or "Label (ID) - RoleName"
 export function endpointChoiceLabel(instance: ModuleInstance, ep: DeviceRecord): string {
 	const id = ep['id'] as number
 	const label = ep['label'] as string
@@ -75,7 +68,6 @@ export function endpointChoiceLabel(instance: ModuleInstance, ep: DeviceRecord):
 	return `${label} (${id})${roleName}`
 }
 
-// Build role choices: "Name (ID)"
 export function roleChoices(instance: ModuleInstance): { id: string; label: string }[] {
 	_instance = instance
 	return [...instance.rolesets.values()].map((rs) => ({
@@ -84,7 +76,6 @@ export function roleChoices(instance: ModuleInstance): { id: string; label: stri
 	}))
 }
 
-// Build endpoint choices: "Label (ID)" or "Label (ID) - RoleName"
 export function endpointChoices(instance: ModuleInstance): { id: string; label: string }[] {
 	_instance = instance
 	return [...instance.endpoints.values()].map((ep) => ({
@@ -93,7 +84,6 @@ export function endpointChoices(instance: ModuleInstance): { id: string; label: 
 	}))
 }
 
-// Build port choices: "Label (Desc)" e.g. "Andy (2W Port A)"
 export function portChoices(instance: ModuleInstance): { id: string; label: string }[] {
 	_instance = instance
 	return [...instance.ports.values()].map((p) => ({
@@ -102,9 +92,6 @@ export function portChoices(instance: ModuleInstance): { id: string; label: stri
 	}))
 }
 
-// ─── Generic field write (walks ControlDef) ───────────────────────────────────
-
-// Resolve a value for inc/dec mode given the current value and value type.
 function resolveIncDec(
 	current: unknown,
 	vt: import('./types.js').SettingValueType,
@@ -150,7 +137,6 @@ export async function executeWrite(
 	const res = record['res'] as string
 	const url = `http://${instance.config.host}${def.write.pathTemplate.replace('{res}', res)}`
 
-	// Endpoint PUT requires gid as a required field — only inject for endpoint scope
 	const gid = def.scope === 'endpoint' ? (record['gid'] as string | undefined) : undefined
 	const body = gid ? { gid, [def.write.bodyKey]: resolvedValue } : { [def.write.bodyKey]: resolvedValue }
 
@@ -182,10 +168,6 @@ async function callFetch(instance: ModuleInstance, fetchFn: string, gid?: string
 	instance.rebuildIfChanged()
 }
 
-// ─── Shared keyset write scaffolding ─────────────────────────────────────────
-
-// Iterates roleIds, resolves each to a keyset, calls buildEntry to get the body
-// entry, then PUTs the collected body to /api/2/keysets and refreshes the store.
 async function putKeysets(
 	instance: ModuleInstance,
 	roleIds: number[],
@@ -224,8 +206,6 @@ async function putKeysets(
 	}
 }
 
-// Find the endpoint ID currently online for a given role ID.
-// Returns null if no online beltpack is assigned to that role.
 function findEndpointForRole(instance: ModuleInstance, roleId: number): number | null {
 	return (
 		[...instance.endpointStatus.keys()].find((id) => {
@@ -234,8 +214,6 @@ function findEndpointForRole(instance: ModuleInstance, roleId: number): number |
 		}) ?? null
 	)
 }
-
-// ─── Keyset write (bulk PUT to /api/2/keysets) ────────────────────────────────
 
 export async function setKeyset(
 	instance: ModuleInstance,
@@ -265,8 +243,6 @@ export async function setKeyset(
 			: { type: keyset['type'], settings: { [def.write!.bodyKey]: resolvedValue } }
 	})
 }
-
-// ─── Key assignment ───────────────────────────────────────────────────────────
 
 type KeyEntity = { res: string; gid?: string; type: number }
 
@@ -317,8 +293,6 @@ export async function assignKeyChannel(
 	})
 }
 
-// ─── RMK ─────────────────────────────────────────────────────────────────────
-
 export async function remoteMicKill(instance: ModuleInstance, roleId: string): Promise<void> {
 	_instance = instance
 	let endpointId: number | null = null
@@ -341,8 +315,6 @@ export async function remoteMicKill(instance: ModuleInstance, roleId: string): P
 		log.error(`RMK failed (role=${roleId || 'all'}): ${String(error)}`)
 	}
 }
-
-// ─── Call ─────────────────────────────────────────────────────────────────────
 
 export async function sendCall(instance: ModuleInstance, roleId: string, active: boolean, text: string): Promise<void> {
 	_instance = instance
@@ -371,8 +343,6 @@ export async function sendCall(instance: ModuleInstance, roleId: string, active:
 		log.error(`Call failed (role=${roleId || 'all'}): ${String(error)}`)
 	}
 }
-
-// ─── Nulling ──────────────────────────────────────────────────────────────────
 
 export async function startNulling(instance: ModuleInstance, portIds: number[]): Promise<void> {
 	_instance = instance
@@ -409,8 +379,6 @@ async function pollNulling(instance: ModuleInstance, portId: number, url: string
 	}
 }
 
-// ─── Endpoint association ─────────────────────────────────────────────────────
-
 export async function changeEndpointAssociation(
 	instance: ModuleInstance,
 	endpointId: number,
@@ -426,7 +394,5 @@ export async function changeEndpointAssociation(
 	} else {
 		await fetchEndpoints(instance)
 	}
-	// Force rebuild regardless of fingerprint — association change in liveStatus
-	// may not be reflected yet in endpointStatus at this point.
 	instance.forceRebuild()
 }

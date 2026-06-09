@@ -29,7 +29,6 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 	secrets!: ModuleSecrets
 	bearerToken: string = ''
 
-	// ─── Device data stores ────────────────────────────────────────────────────
 	ports: Map<number, DeviceRecord> = new Map()
 	endpoints: Map<number, DeviceRecord> = new Map()
 	gateways: Map<number, DeviceRecord> = new Map()
@@ -39,17 +38,13 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 	connections: Map<number, DeviceRecord> = new Map()
 	deviceInfo: DeviceInfo | null = null
 
-	// ─── Schema-derived control definitions ───────────────────────────────────
 	controlDefs: ControlDef[] = []
 	keyAssignCapabilities: Record<string, KeyAssignCapabilities> = {}
 
-	// ─── Feedback trigger registry ────────────────────────────────────────────
 	feedbackTriggers: Map<string, FeedbackStore> = new Map()
 
-	// ─── Nulling state ────────────────────────────────────────────────────────
 	nullingStatus: Map<number, string> = new Map()
 
-	// ─── GPI state ────────────────────────────────────────────────────────────
 	gpiState: Map<number, boolean> = new Map()
 	gpiEvents: Map<number, DeviceRecord[]> = new Map()
 	gpiIds: number[] = []
@@ -74,14 +69,11 @@ export default class ModuleInstance extends InstanceBase<ModuleTypes> {
 	async configUpdated(config: ModuleConfig, secrets: ModuleSecrets): Promise<void> {
 		const hostChanged = config.host !== this.config?.host
 
-		// If the refresh flag is set, clear the cache and reset the flag in one
-		// atomic saveConfig call — before the restart that saveConfig triggers.
 		if (config.refreshSchema) {
 			config = clearSchemaCache(config)
 			this.config = config
 			this.secrets = secrets
 			this.saveConfig(config, undefined)
-			// saveConfig will trigger a restart; nothing further needed here
 			return
 		}
 

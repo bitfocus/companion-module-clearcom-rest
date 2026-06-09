@@ -8,3 +8,4 @@ DEBUG-*
 /.vscode
 .DS_Store
 schemas
+code-explanation.md

@@ -2,8 +2,6 @@ import ModuleInstance from './main.js'
 import { ControlDef } from './types.js'
 import { connectSocket, disconnectSocket } from './network.js'
 
-// ─── Device dispatch ──────────────────────────────────────────────────────────
-
 export function connect(instance: ModuleInstance): void {
 	connectSocket(instance)
 }
@@ -11,10 +9,6 @@ export function connect(instance: ModuleInstance): void {
 export function disconnect(): void {
 	disconnectSocket()
 }
-
-// ─── Schema-level skip lists ──────────────────────────────────────────────────
-// Raw property keys excluded during schema parsing, before ControlDef IDs exist.
-// Add keys here to suppress entire categories of schema-derived fields.
 
 export const SKIP_PORT_SETTINGS = new Set([
 	'vox',
@@ -47,22 +41,9 @@ export const SKIP_LIVE_STATUS = new Set([
 	'wirelessStatus',
 ])
 
-// ─── ControlDef filter ────────────────────────────────────────────────────────
-// Defs listed here are excluded from actions and feedbacks regardless of schema.
-// Use this to suppress fields that are technically valid but not useful in
-// Companion, or that cause problems on certain firmware versions.
+const EXCLUDE_IDS = new Set<string>([])
 
-const EXCLUDE_IDS = new Set<string>([
-	// Examples (uncomment to activate):
-	// 'port.splitLabel',       // internal field, not user-facing
-	// 'port.isIVCPortEnabled', // IVC-only, irrelevant for most installs
-])
-
-// Defs listed here are the ONLY ones included (empty = no whitelist, include all).
-// Useful during development to limit scope to a known-working subset.
-const INCLUDE_ONLY_IDS = new Set<string>([
-	// Leave empty for production — all non-excluded defs are included
-])
+const INCLUDE_ONLY_IDS = new Set<string>([])
 
 export function filterControlDefs(defs: ControlDef[]): ControlDef[] {
 	return defs.filter((def) => {

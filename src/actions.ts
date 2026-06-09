@@ -11,8 +11,6 @@ import { makeLogger } from './logger.js'
 import { postRequest, putRequest, deleteRequest, DeviceRequestError } from './network.js'
 import { ControlDef, SettingValueType } from './types.js'
 
-// ─── Value option builder ─────────────────────────────────────────────────────
-
 type Choice = { id: string; label: string }
 
 function valueChoices(vt: SettingValueType): Choice[] {
@@ -77,8 +75,6 @@ function modeOptions(def: ControlDef): SomeCompanionActionInputField[] {
 	]
 }
 
-// ─── Enum label formatting ─────────────────────────────────────────────────────
-
 const HEADSET_MIC_TYPE_LABELS: Record<string, string> = {
 	dynamic_0: 'Dynamic (0dB)',
 	dynamic_3: 'Dynamic (-3dB)',
@@ -101,10 +97,6 @@ function formatEnumLabel(value: string): string {
 		.replace(/^\w/, (c) => c.toUpperCase())
 }
 
-// Converts activation state enum values to human-readable labels.
-// Tokens: dual, force, talk, listen — where 'force' always modifies the next token.
-// e.g. "talkforcelisten" → "Talk & Force Listen"
-// e.g. "forcetalkforcelisten" → "Force Talk & Force Listen"
 function activationStateLabel(value: string): string {
 	const tokens = value.match(/dual|force|talk|listen/gi) ?? [value]
 	const parts: string[] = []
@@ -128,8 +120,6 @@ function slotFieldEnumLabel(key: string, value: string): string {
 	return formatEnumLabel(value)
 }
 
-// ─── Timeout wrapper ──────────────────────────────────────────────────────────
-
 async function withTimeout(name: string, instance: ModuleInstance, fn: () => Promise<void>): Promise<void> {
 	const log = makeLogger('actions', () => instance.config)
 	const timeoutSentinel = Symbol('timeout')
@@ -148,8 +138,6 @@ async function withTimeout(name: string, instance: ModuleInstance, fn: () => Pro
 	}
 }
 
-// ─── Schema-driven actions ────────────────────────────────────────────────────
-
 function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions {
 	const actions: CompanionActionDefinitions = {}
 	const rChoices = arcadia.roleChoices(instance)
@@ -160,17 +148,13 @@ function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions 
 	for (const def of instance.controlDefs) {
 		if (!def.write) continue
 
-		// Filter by selected device types if configured
 		if (def.deviceTypes.length > 0 && selectedTypes.length > 0) {
 			if (!def.deviceTypes.some((dt) => selectedTypes.includes(dt))) continue
 		}
 
-		// For action choices, use the most restrictive value type across all overrides.
-		// This prevents showing invalid values for port types with tighter ranges (e.g. 2W gain).
 		const effectiveVt = (() => {
 			if (!def.perTypeOverride) return def.valueType
 			const overrides = Object.values(def.perTypeOverride)
-			// Pick the override with the fewest valid values (most restrictive)
 			let most: SettingValueType = def.valueType
 			for (const ov of overrides) {
 				const ovCount =
@@ -195,7 +179,6 @@ function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions 
 		const isPort = def.scope === 'port'
 		const isEndpoint = def.scope === 'endpoint'
 
-		// Label/string fields target a single subject — multi-select would create duplicates
 		const isSingleSubject = def.valueType.kind === 'string'
 		const subjectOption: SomeCompanionActionInputField = isPort
 			? isSingleSubject
@@ -251,10 +234,6 @@ function buildDefsActions(instance: ModuleInstance): CompanionActionDefinitions 
 	return actions
 }
 
-// ─── Manual actions ───────────────────────────────────────────────────────────
-
-// Builds resource-path-keyed choices with consistent "Category: Label" prefixes.
-// Used wherever the API expects res paths (e.g. GPI routing source/destination).
 function buildEntityChoices(
 	instance: ModuleInstance,
 	include: { connections?: boolean; roles?: boolean; ports?: boolean; splitInput?: boolean; splitOutput?: boolean },
@@ -399,7 +378,6 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		},
 	}
 
-	// Nulling — only for 2W ports
 	const twoPorts = [...instance.ports.values()].filter((p) => p['port_config_type'] === '2W')
 	if (twoPorts.length > 0) {
 		const twoPChoices = twoPorts.map((p) => ({
@@ -419,7 +397,6 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		}
 	}
 
-	// Key assign — one action per device type, driven by keyAssignCapabilities
 	const filteredCaps = Object.entries(instance.keyAssignCapabilities).filter(
 		([dt]) => selectedTypes.length === 0 || selectedTypes.includes(dt),
 	)
@@ -433,7 +410,6 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			{ type: 'dropdown', id: 'assignTo', label: 'Assign To', default: '', choices: assignToChoices },
 		]
 
-		// Dynamically add one option per slot field discovered from schema
 		for (const field of caps.slotFields) {
 			const choices =
 				field.valueType.kind === 'string-enum'
@@ -485,7 +461,6 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 					else if (entity['type'] === 1) assignTo = `port:${res.split('/').pop()}`
 				}
 
-				// Dynamically read back all slot fields
 				const learnedSlotOpts: Record<string, unknown> = { assignTo }
 				for (const field of caps.slotFields) {
 					const val = slot[field.key]
@@ -498,7 +473,6 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			},
 			callback: async (action: CompanionActionEvent) => {
 				const roleIds = (action.options['roleIds'] as string[]).map(Number)
-				// Collect all slot field values from action options
 				const slotValues: Record<string, unknown> = {}
 				for (const field of caps.slotFields) {
 					const raw = action.options[`slot_${field.key}`] as string | undefined
@@ -518,15 +492,11 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		}
 	}
 
-	// GPI routing + trigger — always available
-	// gpiChoices is shared between both actions.
 	const gpiCount = instance.gpiIds.length > 0 ? instance.gpiIds.length : Math.max(instance.gpiCount, 1)
 	const gpiChoices = Array.from({ length: gpiCount }, (_, i) => ({ id: String(i), label: `GPI ${i + 1}` }))
 
 	{
-		// Source: Roles, non-split Ports, input-direction split ports (e.g. PGM)
 		const sourceChoices = buildEntityChoices(instance, { roles: true, ports: true, splitInput: true })
-		// Destination: Channels, Roles, non-split Ports, output-direction split ports (e.g. SA)
 		const destinationChoices = buildEntityChoices(instance, {
 			connections: true,
 			roles: true,
@@ -534,8 +504,6 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 			splitOutput: true,
 		})
 
-		// Single flat event dropdown: "GPI X – <Add New>" + "GPI X – Event N" for each cached event.
-		// The ID encodes both GPI and event: "add_<gpiIdx>" or "<gpiIdx>:<eventId>".
 		const eventRefChoices: Choice[] = []
 		for (let i = 0; i < gpiChoices.length; i++) {
 			const events = instance.gpiEvents.get(i) ?? []
@@ -626,13 +594,11 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 							await putRequest(`${base}/${refEventId}`, instance, body)
 						}
 					}
-					// live:gpios socket event will trigger the refresh; no need to fetch here
 				})
 			},
 		}
 	}
 
-	// GPI trigger — always available
 	actions['trigger_gpi'] = {
 		name: '[NEP] Trigger GPI',
 		description: 'Manually assert or deassert a GPI input on the device.',
@@ -672,7 +638,7 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 	}
 
 	return actions
-} // ─── Public entry point ───────────────────────────────────────────────────────
+}
 
 export function UpdateActions(instance: ModuleInstance): void {
 	instance.setActionDefinitions({
