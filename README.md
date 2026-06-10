@@ -4,7 +4,11 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
-### 0.4.2
+### 0.4.3
+
+- Fix keyset assigned to (none) not unassigning
+
+#### 0.4.2
 
 - Fix for HKB-2X key setting action not working
 - Fix to allow multiple key settings in one button

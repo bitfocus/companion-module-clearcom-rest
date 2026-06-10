@@ -4,7 +4,7 @@
 	"name": "clearcom-rest",
 	"shortname": "CC Rest",
 	"description": "A Module to control Clear-Com equipment that use a REST API",
-	"version": "0.4.2",
+	"version": "0.4.3",
 	"type": "connection",
 	"license": "MIT",
 	"repository": "git+https://github.com/bitfocus/companion-module-clearcom-rest.git",

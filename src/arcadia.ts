@@ -299,7 +299,7 @@ export async function assignKeyChannel(
 			if ((slot['keysetIndex'] as number) !== keyIndex) return slot
 			const updatedSlot: Record<string, unknown> = {
 				...slot,
-				entities: assignTo === '' ? slot['entities'] : resolveKeyEntity(instance, assignTo),
+				entities: resolveKeyEntity(instance, assignTo),
 				...slotValues,
 			}
 			if (supportsCallKey) {
