@@ -19,6 +19,7 @@ export const SKIP_PORT_SETTINGS = new Set([
 	'ivcDirect',
 	'authentication',
 	'associatedEndpoint',
+	'multiChannel',
 ])
 
 export const SKIP_KEYSET_SETTINGS = new Set([

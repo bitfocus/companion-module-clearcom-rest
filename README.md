@@ -4,7 +4,11 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
-### 0.4.3
+### 0.4.5
+
+- Removed commands that don't perform a useful function
+
+#### 0.4.3
 
 - Fix keyset assigned to (none) not unassigning
 
