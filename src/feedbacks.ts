@@ -185,6 +185,26 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 		choices: epChoices,
 	}
 
+	const connChoices = [...instance.connections.values()].map((c) => ({
+		id: String(c['id'] as number),
+		label: c['label'] as string,
+	}))
+	const pChoices = portChoices(instance)
+	const portOption = {
+		type: 'dropdown' as const,
+		id: 'portId',
+		label: 'Port',
+		default: pChoices[0]?.id,
+		choices: pChoices,
+	}
+	const connOption = {
+		type: 'dropdown' as const,
+		id: 'connectionId',
+		label: 'Connection',
+		default: connChoices[0]?.id,
+		choices: connChoices,
+	}
+
 	const selectedTypes = instance.config.endpointTypes ?? []
 	const filteredCaps = Object.entries(instance.keyAssignCapabilities).filter(
 		([dt]) => selectedTypes.length === 0 || selectedTypes.includes(dt),
@@ -429,10 +449,51 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 				}
 			: {}),
 
+		port_joined: {
+			type: 'boolean',
+			name: '[Port] Joined to connection',
+			description: 'True when the port is currently joined to the selected connection.',
+			defaultStyle: { bgcolor: 0x00ff00, color: 0x000000 } satisfies Partial<CompanionFeedbackButtonStyleResult>,
+			options: [portOption, connOption],
+			unsubscribe: unsubscribeFn(instance),
+			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
+				subscribe(instance, feedback.feedbackId, 'connections')
+				const port = instance.ports.get(Number(feedback.options['portId']))
+				if (!port) return false
+				const portGid = port['gid'] as string | undefined
+				if (portGid === undefined) return false
+				const conn = instance.connections.get(Number(feedback.options['connectionId']))
+				if (!conn) return false
+				const participants = (conn['participants'] as DeviceRecord[] | undefined) ?? []
+				return participants.some((p) => p['gid'] === portGid)
+			},
+		},
+
+		port_joined_connections: {
+			type: 'value',
+			name: '[Port] Joined connections',
+			description: 'Returns the names of all connections this port is currently joined to.',
+			options: [portOption],
+			unsubscribe: unsubscribeFn(instance),
+			callback: (feedback: { feedbackId: string; options: Record<string, unknown> }) => {
+				subscribe(instance, feedback.feedbackId, 'connections')
+				const port = instance.ports.get(Number(feedback.options['portId']))
+				if (!port) return []
+				const portGid = port['gid'] as string | undefined
+				const result: string[] = []
+				for (const conn of instance.connections.values()) {
+					const participants = (conn['participants'] as DeviceRecord[] | undefined) ?? []
+					if (portGid !== undefined && participants.some((p) => p['gid'] === portGid))
+						result.push(conn['label'] as string)
+				}
+				return result
+			},
+		},
+
 		gpi_triggered: {
 			type: 'boolean',
 			name: '[NEP] GPI Triggered',
-			description: 'True when the specified GPI index was last asserted via a Trigger GPI action.',
+			description: 'Current state of the specified GPI as reported by the base station.',
 			defaultStyle: { bgcolor: 0xff8800, color: 0x000000 },
 			options: [
 				{
@@ -440,9 +501,12 @@ function buildManualFeedbacks(instance: ModuleInstance): Record<string, Feedback
 					id: 'gpiId',
 					label: 'GPI',
 					default: '0',
-					choices: Array.from({ length: instance.gpiCount || 1 }, (_, i) => ({
-						id: String(i),
-						label: `GPI ${i + 1}`,
+					choices: (instance.gpiIds.length > 0
+						? instance.gpiIds
+						: Array.from({ length: instance.gpiCount || 1 }, (_, i) => i)
+					).map((id) => ({
+						id: String(id),
+						label: `GPI ${id}`,
 					})),
 				},
 			],

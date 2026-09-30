@@ -60,6 +60,12 @@ export type EndpointUpdatedEvent = {
 	value: unknown
 }
 
+export type GpiUpdatedEvent = {
+	gpiId: number
+	path: string
+	value: unknown
+}
+
 export type SchemaValueType = SettingValueType
 
 export type KeySlotField = {

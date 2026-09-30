@@ -397,6 +397,83 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		}
 	}
 
+	const connChoices = [...instance.connections.values()].map((c) => ({
+		id: String(c['id'] as number),
+		label: c['label'] as string,
+	}))
+
+	if (connChoices.length > 0) {
+		const portChoices = arcadia.portChoices(instance)
+		const portConnOptions: SomeCompanionActionInputField[] = [
+			{ type: 'multidropdown', id: 'portId', label: 'Ports', default: [], choices: portChoices },
+			{
+				type: 'multidropdown',
+				id: 'connectionId',
+				label: 'Connections',
+				default: [],
+				choices: connChoices,
+			},
+		]
+		actions['port_join'] = {
+			name: '[Port] Join connection',
+			description: 'Make a port join one or more connections.',
+			options: portConnOptions,
+			callback: async (action: CompanionActionEvent) => {
+				const selectedPorts = action.options['portId']
+				const portIds = Array.isArray(selectedPorts) ? selectedPorts : [selectedPorts]
+				const selectedConnections = action.options['connectionId']
+				const connectionIds = Array.isArray(selectedConnections) ? selectedConnections : [selectedConnections]
+				await withTimeout('port_join', instance, async () => {
+					for (const portId of portIds) {
+						for (const connectionId of connectionIds) {
+							await arcadia.joinPort(instance, Number(portId), Number(connectionId))
+						}
+					}
+				})
+			},
+		}
+		actions['port_leave'] = {
+			name: '[Port] Leave connection',
+			description: 'Make a port leave one or all connections.',
+			options: [
+				{
+					type: 'multidropdown',
+					id: 'portId',
+					label: 'Ports',
+					default: [],
+					choices: [{ id: 'all', label: 'All' }, ...portChoices],
+				},
+				{
+					type: 'multidropdown',
+					id: 'connectionId',
+					label: 'Connections',
+					default: [],
+					choices: [{ id: 'all', label: 'All' }, ...connChoices],
+				},
+			],
+			callback: async (action: CompanionActionEvent) => {
+				const selectedPorts = action.options['portId']
+				const selectedPortIds = Array.isArray(selectedPorts) ? selectedPorts : [selectedPorts]
+				const portIds = selectedPortIds.includes('all') ? portChoices.map((port) => port.id) : selectedPortIds
+				const selectedConnections = action.options['connectionId']
+				const connectionIds = Array.isArray(selectedConnections) ? selectedConnections : [selectedConnections]
+				await withTimeout('port_leave', instance, async () => {
+					for (const portId of portIds) {
+						if (connectionIds.includes('all')) {
+							for (const connection of connChoices) {
+								await arcadia.leavePort(instance, Number(portId), Number(connection.id))
+							}
+						} else {
+							for (const connectionId of connectionIds) {
+								await arcadia.leavePort(instance, Number(portId), Number(connectionId))
+							}
+						}
+					}
+				})
+			},
+		}
+	}
+
 	const filteredCaps = Object.entries(instance.keyAssignCapabilities).filter(
 		([dt]) => selectedTypes.length === 0 || selectedTypes.includes(dt),
 	)
@@ -492,8 +569,9 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		}
 	}
 
-	const gpiCount = instance.gpiIds.length > 0 ? instance.gpiIds.length : Math.max(instance.gpiCount, 1)
-	const gpiChoices = Array.from({ length: gpiCount }, (_, i) => ({ id: String(i), label: `GPI ${i + 1}` }))
+	const gpiIds =
+		instance.gpiIds.length > 0 ? instance.gpiIds : Array.from({ length: Math.max(instance.gpiCount, 1) }, (_, i) => i)
+	const gpiChoices = gpiIds.map((id) => ({ id: String(id), label: `GPI ${id}` }))
 
 	{
 		const sourceChoices = buildEntityChoices(instance, { roles: true, ports: true, splitInput: true })
@@ -505,15 +583,15 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 		})
 
 		const eventRefChoices: Choice[] = []
-		for (let i = 0; i < gpiChoices.length; i++) {
-			const events = instance.gpiEvents.get(i) ?? []
+		for (const gpiId of gpiIds) {
+			const events = instance.gpiEvents.get(gpiId) ?? []
 			events.forEach((ev, j) => {
 				eventRefChoices.push({
-					id: `${i}:${String((ev['id'] as string | number | undefined) ?? j)}`,
-					label: `[GPI ${i + 1}] Event ${j + 1}`,
+					id: `${gpiId}:${String((ev['id'] as string | number | undefined) ?? j)}`,
+					label: `[GPI ${gpiId}] Event ${j + 1}`,
 				})
 			})
-			eventRefChoices.push({ id: `add_${i}`, label: `[GPI ${i + 1}] <Add New>` })
+			eventRefChoices.push({ id: `add_${gpiId}`, label: `[GPI ${gpiId}] <Add New>` })
 		}
 		if (eventRefChoices.length === 0) eventRefChoices.push({ id: 'add_0', label: '[GPI 1] <Add New>' })
 

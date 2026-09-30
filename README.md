@@ -4,9 +4,19 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
-### 0.4.5
+### 0.4.8
+
+- Corrected GPI Status value feedback source
+
+#### 0.4.7
+
+- Add "All" to the Leave connection action
+- Change join and leave connection selections to allow for multiple choices
+
+#### 0.4.5
 
 - Removed commands that don't perform a useful function
+- Added Port Join/Leave Channels or Groups
 
 #### 0.4.3
 

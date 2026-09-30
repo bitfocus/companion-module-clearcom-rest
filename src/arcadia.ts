@@ -397,6 +397,52 @@ async function pollNulling(instance: ModuleInstance, portId: number, url: string
 	}
 }
 
+export async function joinPort(instance: ModuleInstance, portId: number, connectionId: number): Promise<void> {
+	_instance = instance
+	const port = instance.ports.get(portId)
+	if (!port) {
+		log.warn(`joinPort: no port ${portId}`)
+		return
+	}
+	const url = `http://${instance.config.host}${port['res'] as string}/join`
+	const body = { target: `/api/1/connections/${connectionId}` }
+	try {
+		await postRequest(url, instance, body)
+		log.info(`joinPort port=${portId} connection=${connectionId}`)
+		await fetchPorts(instance)
+	} catch (error) {
+		if (!(error instanceof DeviceRequestError)) throw error
+		log.error(`joinPort port=${portId} connection=${connectionId} failed: ${String(error)}`)
+	}
+}
+
+export async function leavePort(instance: ModuleInstance, portId: number, connectionId: number): Promise<void> {
+	_instance = instance
+	const port = instance.ports.get(portId)
+	if (!port) {
+		log.warn(`leavePort: no port ${portId}`)
+		return
+	}
+	const url = `http://${instance.config.host}${port['res'] as string}/leave`
+	const body = { target: `/api/1/connections/${connectionId}` }
+	try {
+		await postRequest(url, instance, body)
+		log.info(`leavePort port=${portId} connection=${connectionId}`)
+		await fetchPorts(instance)
+	} catch (error) {
+		if (!(error instanceof DeviceRequestError)) throw error
+		// Leaving a connection is intentionally idempotent. The device can remove a
+		// connection between our port refresh and this request, in which case it
+		// reports the connection index as missing even though the desired state has
+		// already been reached.
+		if (/failed to find connection at index\(/i.test(error.message)) {
+			log.warn(`leavePort port=${portId} connection=${connectionId} already absent: ${error.message}`)
+		} else {
+			log.error(`leavePort port=${portId} connection=${connectionId} failed: ${String(error)}`)
+		}
+	}
+}
+
 export async function changeEndpointAssociation(
 	instance: ModuleInstance,
 	endpointId: number,

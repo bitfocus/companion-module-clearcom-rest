@@ -2,7 +2,7 @@ import io, { Socket } from 'socket.io-client'
 import { makeLogger } from './logger.js'
 import { InstanceStatus } from '@companion-module/base'
 import ModuleInstance from './main.js'
-import { DeviceRecord, DeviceInfo, EndpointUpdatedEvent } from './types.js'
+import { DeviceRecord, DeviceInfo, EndpointUpdatedEvent, GpiUpdatedEvent } from './types.js'
 
 let _instance: ModuleInstance | null = null
 const log = makeLogger('network', () => _instance?.config)
@@ -402,6 +402,19 @@ function handleEndpointUpdated(instance: ModuleInstance, event: EndpointUpdatedE
 	}
 }
 
+function handleGpiUpdated(instance: ModuleInstance, event: GpiUpdatedEvent): void {
+	if (event.path !== 'liveStatus') return
+	const value = event.value as DeviceRecord
+	const status = value['status']
+	if (typeof status !== 'boolean') return
+
+	// The base station reports the physical GPI level with active-low polarity:
+	// status=false means the GPI is asserted. Store the user-facing state so
+	// physical changes match the state requested by the Trigger GPI action.
+	instance.gpiState.set(event.gpiId, !status)
+	instance.triggerFeedbacksForStore('gpi')
+}
+
 async function fetchNullingStatus(instance: ModuleInstance): Promise<void> {
 	const twoPorts = [...instance.ports.values()].filter((p) => p['port_config_type'] === '2W')
 	for (const port of twoPorts) {
@@ -471,6 +484,7 @@ const HANDLED_EVENTS = new Set([
 	'live:gpios',
 	'init',
 	'EndpointUpdated',
+	'GpiUpdated',
 ])
 
 export function connectSocket(instance: ModuleInstance): void {
@@ -580,6 +594,13 @@ export function connectSocket(instance: ModuleInstance): void {
 		if (needsChoiceRebuild) {
 			instance.rebuildIfChanged()
 		}
+	})
+
+	socket.on('GpiUpdated', (data: GpiUpdatedEvent | GpiUpdatedEvent[]) => {
+		// Arcadia firmware sends a single event object for GPI changes, while
+		// some versions send an array (as EndpointUpdated does).
+		const events = Array.isArray(data) ? data : [data]
+		for (const event of events) handleGpiUpdated(instance, event)
 	})
 
 	const originalOnevent = (socket as unknown as { onevent: (packet: { data: unknown[] }) => void }).onevent.bind(socket)

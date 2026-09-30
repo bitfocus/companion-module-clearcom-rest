@@ -1,6 +1,6 @@
 ## Clear-Com Rest Module
 
-version 0.4.5
+version 0.4.8
 
 This Module is for use with Clear-Com master stations that have a REST API, like the Arcadia and Edge.
 
