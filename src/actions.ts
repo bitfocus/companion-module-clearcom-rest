@@ -9,7 +9,7 @@ import ModuleInstance from './main.js'
 import * as arcadia from './arcadia.js'
 import { makeLogger } from './logger.js'
 import { postRequest, putRequest, deleteRequest, DeviceRequestError } from './network.js'
-import { ControlDef, SettingValueType } from './types.js'
+import { ControlDef, DeviceRecord, SettingValueType } from './types.js'
 
 type Choice = { id: string; label: string }
 
@@ -460,7 +460,17 @@ function buildManualActions(instance: ModuleInstance): CompanionActionDefinition
 				await withTimeout('port_leave', instance, async () => {
 					for (const portId of portIds) {
 						if (connectionIds.includes('all')) {
-							for (const connection of connChoices) {
+							const port = instance.ports.get(Number(portId))
+							const portGid = port?.['gid'] as string | undefined
+							const joinedConnections =
+								portGid === undefined
+									? []
+									: connChoices.filter((connection) => {
+											const conn = instance.connections.get(Number(connection.id))
+											const participants = (conn?.['participants'] as DeviceRecord[] | undefined) ?? []
+											return participants.some((participant) => participant['gid'] === portGid)
+										})
+							for (const connection of joinedConnections) {
 								await arcadia.leavePort(instance, Number(portId), Number(connection.id))
 							}
 						} else {

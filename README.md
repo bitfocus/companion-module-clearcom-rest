@@ -4,7 +4,11 @@ See [HELP.md](./companion/HELP.md) and [LICENSE](./LICENSE)
 
 Changelog:
 
-### 0.4.8
+### 0.4.9
+
+- See if only leaving active ports fixes the port_leave timeout
+
+#### 0.4.8
 
 - Corrected GPI Status value feedback source
 
